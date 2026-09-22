@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^Set-Location 'C:\\\\Users\\\\tmiya\\\\OneDrive\\\\デスクトップ\\\\wp-facility-booking'; php -l wpplugin\\.php$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

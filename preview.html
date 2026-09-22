@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WP Plugin Calendar Preview</title>
+  <link rel="stylesheet" href="calendar.css">
+</head>
+<body>
+  <main>
+    <div class="wpplugin-calendar" data-preview="true" data-today="2026-09-22" data-default-name="preview-user" data-facilities='[{"id":"room-a","name":"会議室A","fee":"1時間 1,000円","start":"09:00","end":"18:00","info":"会議や研修に利用できます。"},{"id":"studio-b","name":"スタジオB","fee":"1時間 2,000円","start":"10:00","end":"20:00","info":"撮影・収録に利用できます。"}]' data-reservations='[{"id":1,"facility_id":"room-a","date":"2026-09-05","start":"10:00","end":"11:30","title":"チーム定例ミーティング","name":"preview-user","details":"定例会議の予約です。","can_edit":true},{"id":2,"facility_id":"room-a","date":"2026-09-22","start":"14:00","end":"16:00","title":"施設利用サンプル","name":"preview-user","details":"施設利用のサンプルです。","can_edit":true},{"id":3,"facility_id":"studio-b","date":"2026-09-22","start":"16:00","end":"17:30","title":"スタジオ予約","name":"preview-user","details":"スタジオの予約です。","can_edit":true}]'>
+      <p class="wpplugin-reservation__notice" role="status" hidden></p>
+      <div class="wpplugin-calendar__header">
+        <div class="wpplugin-calendar__selectors">
+          <label><span class="screen-reader-text">施設を選択</span><select class="wpplugin-calendar__facility" aria-label="施設を選択"><option value="room-a">会議室A</option><option value="studio-b">スタジオB</option></select></label>
+          <label><span class="screen-reader-text">年を選択</span><select class="wpplugin-calendar__year" aria-label="年を選択"></select></label>
+          <label><span class="screen-reader-text">月を選択</span><select class="wpplugin-calendar__month" aria-label="月を選択"></select></label>
+        </div>
+      </div><button type="button" class="wpplugin-calendar__toggle" aria-expanded="false" aria-controls="wpplugin-calendar-panel">すべての日を表示</button><div class="wpplugin-calendar__date-picker"><label><span class="screen-reader-text">日付を指定</span><select class="wpplugin-calendar__date-select" aria-label="日付を指定"><option value="">日付を指定</option></select></label></div><div id="wpplugin-calendar-panel" class="wpplugin-calendar__panel" hidden><div class="wpplugin-calendar__grid"></div><div class="wpplugin-calendar__list"></div></div><div class="wpplugin-calendar__selected-date-list" hidden></div>
+    </div>
+    <section class="wpplugin-facility-info">
+      <h2>施設情報</h2>
+      <dl>
+        <div><dt>施設名</dt><dd class="wpplugin-facility-info__name">会議室A</dd></div>
+        <div><dt>利用料金</dt><dd class="wpplugin-facility-info__fee">1時間 1,000円</dd></div>
+        <div><dt>利用可能時間</dt><dd class="wpplugin-facility-info__hours">09:00〜18:00</dd></div>
+        <div><dt>施設情報</dt><dd class="wpplugin-facility-info__description">会議や研修に利用できます。</dd></div>
+      </dl>
+    </section>
+    <section class="wpplugin-reservation" hidden>
+      <h2>予約内容</h2>
+      <form class="wpplugin-reservation__form" method="post" data-preview="true">
+        <input type="hidden" class="wpplugin-reservation__id">
+        <input type="hidden" class="wpplugin-reservation__facility-id" value="room-a">
+        <p class="wpplugin-reservation__selected">選択日: <strong class="wpplugin-reservation__selected-date"></strong></p>
+        <p class="wpplugin-reservation__error" role="alert" hidden></p>
+        <input type="hidden" class="wpplugin-reservation__date" required>
+        <div class="wpplugin-reservation__time-row">
+          <label>開始時刻<select name="reservation_start" required><option value="">選択してください</option></select></label>
+          <label>終了時刻<select name="reservation_end" required><option value="">選択してください</option></select></label>
+        </div>
+        <label>予約タイトル<input type="text" name="reservation_title" maxlength="200" required></label>
+        <label>予約者名<input type="text" name="reservation_name" value="preview-user" maxlength="60" required></label>
+        <label>詳細<textarea name="reservation_details" rows="5"></textarea></label>
+        <button type="submit">予約を保存</button>
+        <button type="button" class="wpplugin-reservation__cancel" hidden>予約をキャンセル</button>
+      </form>
+    </section>
+  </main>
+  <script>
+    const today = new Date();
+    const calendar = document.querySelector('.wpplugin-calendar');
+    const yearSelect = document.querySelector('.wpplugin-calendar__year');
+    const monthSelect = document.querySelector('.wpplugin-calendar__month');
+    for (let year = today.getFullYear() - 10; year <= today.getFullYear() + 10; year += 1) {
+      yearSelect.insertAdjacentHTML('beforeend', `<option value="${year}"${year === today.getFullYear() ? ' selected' : ''}>${year}年</option>`);
+    }
+    for (let month = 1; month <= 12; month += 1) {
+      monthSelect.insertAdjacentHTML('beforeend', `<option value="${month}"${month === today.getMonth() + 1 ? ' selected' : ''}>${month}月</option>`);
+    }
+  </script>
+  <script src="calendar.js"></script>
+</body>
+</html>
