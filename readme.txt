@@ -1,5 +1,5 @@
 === WP Plugin Starter ===
-Contributors: your-name
+Contributors: t180miya
 Requires at least: 7.0
 Tested up to: 7.0
 Requires PHP: 7.4

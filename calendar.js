@@ -97,7 +97,24 @@
 		};
 		const updateFacilityInfo = () => {
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__name' ).textContent = String( selectedFacility.name || '' );
+			const isBoth = selectedFacility.reservation_type === '両方';
+			const isStayOnly = selectedFacility.reservation_type === '宿泊';
+			const hourlyFeeRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__fee-row' );
+			const hoursRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__hours-row' );
+			hourlyFeeRow.hidden = isStayOnly;
+			hoursRow.hidden = isStayOnly;
+			calendar.parentElement.querySelector( '.wpplugin-facility-info__fee-label' ).textContent = isBoth ? '利用料金（時間貸）' : '利用料金';
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__fee' ).textContent = String( selectedFacility.fee || '' );
+			const stayFeeRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee-row' );
+			stayFeeRow.hidden = ! ( isBoth || isStayOnly );
+			if ( isBoth || isStayOnly ) {
+				calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee' ).textContent = `${ String( selectedFacility.stay_fee || '' ) }／泊`;
+			}
+			const stayHoursRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-hours-row' );
+			stayHoursRow.hidden = ! ( isBoth || isStayOnly );
+			if ( isBoth || isStayOnly ) {
+				calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-hours' ).textContent = `${ String( selectedFacility.stay_start || '' ) }〜${ String( selectedFacility.stay_end || '' ) } ※ 翌日`;
+			}
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__hours' ).textContent = `${ String( selectedFacility.start || '' ) }〜${ String( selectedFacility.end || '' ) }`;
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__description' ).textContent = String( selectedFacility.info || '' );
 		};
@@ -118,6 +135,46 @@
 		const dateAndWeekdayLabel = ( date ) => `${ Number( date.slice( -2 ) ) }日（${ weekdayFor( date ) }）`;
 		const escapeHtml = ( value ) => String( value ).replace( /[&<>'"]/g, ( character ) => ( { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[ character ] ) );
 		const truncateTitle = ( title ) => Array.from( title ).slice( 0, 10 ).join( '' ) + ( Array.from( title ).length > 10 ? '…' : '' );
+		const updateReservationFields = () => {
+			const typeRow = reservationForm.querySelector( '.wpplugin-reservation__type-row' );
+			const typeSelect = reservationForm.querySelector( '.wpplugin-reservation__type' );
+			const hourlyTimes = reservationForm.querySelector( '.wpplugin-reservation__hourly-times' );
+			const configuredType = String( selectedFacility.reservation_type || '時間貸' );
+			const supportsBoth = configuredType === '両方';
+			const isStayOnly = configuredType === '宿泊';
+			if ( supportsBoth ) {
+				typeRow.hidden = false;
+			} else {
+				typeRow.hidden = true;
+				typeSelect.value = isStayOnly ? '宿泊' : '時間貸';
+			}
+			const isStay = typeSelect.value === '宿泊';
+			const titleInput = reservationForm.querySelector( '[name="reservation_title"]' );
+			if ( isStay ) {
+				titleInput.value = '宿泊';
+				const detailsInput = reservationForm.querySelector( '[name="reservation_details"]' );
+				if ( ! detailsInput.value ) {
+					detailsInput.value = '利用人数：';
+				}
+			} else {
+				titleInput.value = '';
+			}
+			titleInput.readOnly = isStay;
+			hourlyTimes.hidden = isStay;
+			hourlyTimes.querySelectorAll( 'select' ).forEach( ( select ) => {
+				select.disabled = isStay;
+				select.required = ! isStay;
+			} );
+			const stayFee = reservationForm.querySelector( '.wpplugin-reservation__stay-fee' );
+			stayFee.hidden = ! isStay;
+			stayFee.querySelector( '.wpplugin-reservation__stay-fee-value' ).textContent = String( selectedFacility.stay_fee || '' );
+			const conditions = reservationForm.querySelector( '.wpplugin-reservation__additional-conditions' );
+			conditions.innerHTML = [ 1, 2, 3 ].map( ( index ) => {
+				const condition = String( selectedFacility[ `additional_condition_${ index }` ] || '' );
+				const fee = String( selectedFacility[ `additional_fee_${ index }` ] || '' );
+				return condition ? `<label>${ escapeHtml( condition ) }${ fee ? `（${ escapeHtml( fee ) }）` : '' }<input type="number" name="additional_quantity_${ index }" min="0" step="1" value="0"></label>` : '';
+			} ).join( '' );
+		};
 		const reservationMarkup = ( date ) => reservationsFor( date ).slice( 0, 3 ).map( ( reservation ) => {
 			const text = `${ escapeHtml( reservation.start ) }-${ escapeHtml( reservation.end ) } ${ escapeHtml( truncateTitle( reservation.title ) ) }`;
 			return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span class="wpplugin-calendar__reservation">${ text }</span>`;
@@ -222,22 +279,25 @@
 				selectedDateList.hidden = true;
 			}
 		} );
+		reservationForm.querySelector( '.wpplugin-reservation__type' ).addEventListener( 'change', updateReservationFields );
 		facilitySelect.addEventListener( 'change', () => {
 			selectedFacility = facilities.find( ( facility ) => String( facility.id ) === facilitySelect.value ) || facilities[ 0 ];
 			resetReservationForm();
 			updateFacilityInfo();
 			updateTimeOptions();
+			updateReservationFields();
 			selectedDateList.hidden = true;
 			render();
 		} );
 		reservationForm.addEventListener( 'submit', ( event ) => {
 			const date = reservationForm.querySelector( '.wpplugin-reservation__date' ).value;
-			const start = reservationForm.querySelector( '[name="reservation_start"]' ).value;
-			const end = reservationForm.querySelector( '[name="reservation_end"]' ).value;
+			const isStay = reservationForm.querySelector( '.wpplugin-reservation__type' ).value === '宿泊';
+			const start = isStay ? String( selectedFacility.stay_start || '' ) : reservationForm.querySelector( '[name="reservation_start"]' ).value;
+			const end = isStay ? '24:00' : reservationForm.querySelector( '[name="reservation_end"]' ).value;
 			const reservationId = reservationForm.querySelector( '.wpplugin-reservation__id' ).value;
 			const error = reservationForm.querySelector( '.wpplugin-reservation__error' );
 			const overlaps = reservations.some( ( existing ) => existing.id !== Number( reservationId ) && String( existing.facility_id || 'default' ) === String( selectedFacility.id ) && existing.date === date && start < existing.end && end > existing.start );
-			if ( ! start || ! end || end <= start ) {
+			if ( ! start || ! end || ( ! isStay && end <= start ) ) {
 				event.preventDefault();
 				error.hidden = false;
 				error.textContent = '終了時刻は開始時刻より後を指定してください。';
@@ -254,21 +314,39 @@
 				event.preventDefault();
 				const reservationIndex = reservations.findIndex( ( reservation ) => String( reservation.id ) === reservationId );
 				const isUpdate = reservationIndex >= 0 && reservations[ reservationIndex ].can_edit;
+				const groupId = isUpdate ? String( reservations[ reservationIndex ].group_id || reservations[ reservationIndex ].id ) : String( Date.now() );
+				const reservationKey = isUpdate ? reservations[ reservationIndex ].id : Number( groupId );
 				const saved = {
-					id: isUpdate ? reservations[ reservationIndex ].id : Date.now(),
+					id: reservationKey,
+					group_id: groupId,
+					group_primary_id: reservationKey,
+					group_start_date: date,
 					facility_id: selectedFacility.id,
 					date,
 					start,
 					end,
+					reservation_type: isStay ? '宿泊' : '時間貸',
+					additional_quantities: [ 1, 2, 3 ].map( ( index ) => reservationForm.querySelector( `[name="additional_quantity_${ index }"]` )?.value || '0' ),
 					title: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_title"]' ).value ),
 					name: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_name"]' ).value ),
 					details: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_details"]' ).value ),
 					can_edit: true,
 				};
 				if ( isUpdate ) {
-					reservations.splice( reservationIndex, 1, saved );
-				} else {
-					reservations.push( saved );
+					reservations = reservations.filter( ( reservation ) => String( reservation.group_id || reservation.id ) !== groupId );
+				}
+				reservations.push( saved );
+				if ( isStay ) {
+					const nextDate = new Date( `${ date }T00:00:00` );
+					nextDate.setDate( nextDate.getDate() + 1 );
+					const nextDateValue = `${ nextDate.getFullYear() }-${ String( nextDate.getMonth() + 1 ).padStart( 2, '0' ) }-${ String( nextDate.getDate() ).padStart( 2, '0' ) }`;
+					reservations.push( {
+						...saved,
+						id: Number( groupId ) + 1,
+						date: nextDateValue,
+						start: '00:00',
+						end: String( selectedFacility.stay_end || '' ),
+					} );
 				}
 				persistPreviewReservations();
 				reservationForm.reset();
@@ -290,7 +368,8 @@
 				const reservationId = reservationForm.querySelector( '.wpplugin-reservation__id' ).value;
 				const reservationIndex = reservations.findIndex( ( item ) => String( item.id ) === reservationId );
 				if ( reservationIndex >= 0 ) {
-					reservations.splice( reservationIndex, 1 );
+					const groupId = String( reservations[ reservationIndex ].group_id || reservations[ reservationIndex ].id );
+					reservations = reservations.filter( ( item ) => String( item.group_id || item.id ) !== groupId );
 				}
 				persistPreviewReservations();
 
@@ -312,13 +391,21 @@
 				const selected = reservations.find( ( item ) => String( item.id ) === reservationLink.dataset.reservationId );
 				if ( selected ) {
 					reservation.hidden = false;
-					reservation.querySelector( '.wpplugin-reservation__id' ).value = selected.id;
+					reservation.querySelector( '.wpplugin-reservation__id' ).value = selected.group_primary_id || selected.id;
 					reservation.querySelector( '.wpplugin-reservation__facility-id' ).value = selected.facility_id || selectedFacility.id;
-					reservation.querySelector( '.wpplugin-reservation__date' ).value = selected.date;
-					reservation.querySelector( '.wpplugin-reservation__selected-date' ).textContent = selectedDateLabel( selected.date );
+					reservation.querySelector( '.wpplugin-reservation__date' ).value = selected.group_start_date || selected.date;
+					reservation.querySelector( '.wpplugin-reservation__type' ).value = selected.reservation_type || '時間貸';
+					updateReservationFields();
+					( selected.additional_quantities || [] ).forEach( ( quantity, index ) => {
+						const input = reservation.querySelector( `[name="additional_quantity_${ index + 1 }"]` );
+						if ( input ) {
+							input.value = quantity;
+						}
+					} );
+					reservation.querySelector( '.wpplugin-reservation__selected-date' ).textContent = selectedDateLabel( selected.group_start_date || selected.date );
 					reservation.querySelector( '[name="reservation_start"]' ).value = selected.start;
 					reservation.querySelector( '[name="reservation_end"]' ).value = selected.end;
-					reservation.querySelector( '[name="reservation_title"]' ).value = selected.title;
+					reservation.querySelector( '[name="reservation_title"]' ).value = selected.reservation_type === '宿泊' ? '宿泊' : selected.title;
 					reservation.querySelector( '[name="reservation_name"]' ).value = selected.name;
 					reservation.querySelector( '[name="reservation_details"]' ).value = selected.details;
 					reservation.querySelector( 'button[type="submit"]' ).textContent = '予約を更新';
@@ -359,18 +446,20 @@
 			reservation.querySelector( '.wpplugin-reservation__id' ).value = '';
 			reservation.querySelector( '.wpplugin-reservation__facility-id' ).value = selectedFacility.id;
 			reservation.querySelector( '.wpplugin-reservation__date' ).value = date;
+			updateReservationFields();
 			reservation.querySelector( '.wpplugin-reservation__selected-date' ).textContent = selectedDateLabel( date );
 			reservation.querySelector( '[name="reservation_start"]' ).value = '';
 			reservation.querySelector( '[name="reservation_end"]' ).value = '';
-			reservation.querySelector( '[name="reservation_title"]' ).value = '';
+			reservation.querySelector( '[name="reservation_title"]' ).value = reservation.querySelector( '.wpplugin-reservation__type' ).value === '宿泊' ? '宿泊' : '';
 			reservation.querySelector( '[name="reservation_name"]' ).value = defaultName;
-			reservation.querySelector( '[name="reservation_details"]' ).value = '';
+			reservation.querySelector( '[name="reservation_details"]' ).value = reservation.querySelector( '.wpplugin-reservation__type' ).value === '宿泊' ? '利用人数：' : '';
 			reservation.querySelector( 'button[type="submit"]' ).textContent = '予約を保存';
 			reservation.querySelector( '.wpplugin-reservation__cancel' ).hidden = true;
 			reservation.scrollIntoView( { behavior: 'auto', block: 'nearest' } );
 		} );
 		updateFacilityInfo();
 		updateTimeOptions();
+		updateReservationFields();
 		render();
 	} );
 }() );

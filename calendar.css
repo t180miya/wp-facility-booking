@@ -247,13 +247,29 @@
 
 .wpplugin-facility-info dl > div {
 	display: grid;
-	grid-template-columns: 7rem minmax(0, 1fr);
-	gap: 1rem;
+	grid-template-columns: max-content minmax(0, 1fr);
+	gap: 0.35rem;
+}
+
+.wpplugin-facility-info__description-row {
+	grid-template-columns: 1fr;
+	gap: 0.35rem;
+}
+
+.wpplugin-facility-info__fee-row[hidden],
+.wpplugin-facility-info__stay-fee-row[hidden],
+.wpplugin-facility-info__hours-row[hidden],
+.wpplugin-facility-info__stay-hours-row[hidden] {
+	display: none;
 }
 
 .wpplugin-facility-info dt {
 	color: #526779;
 	font-weight: 700;
+}
+
+.wpplugin-facility-info dt::after {
+	content: '：';
 }
 
 .wpplugin-facility-info dd {
@@ -299,6 +315,22 @@
 	font-weight: 700;
 }
 
+.wpplugin-reservation__type-row[hidden],
+.wpplugin-reservation__hourly-times[hidden],
+.wpplugin-reservation__stay-fee[hidden] {
+	display: none;
+}
+
+.wpplugin-reservation__stay-fee {
+	margin: 0;
+	padding: 0.65rem 0.75rem;
+	border: 1px solid #d9e1e8;
+	border-radius: 6px;
+	background: #e7edf1;
+	color: #526779;
+	font-weight: 700;
+}
+
 .wpplugin-reservation__form input,
 .wpplugin-reservation__form select,
 .wpplugin-reservation__form textarea {
@@ -310,6 +342,12 @@
 	background: #ffffff;
 	color: #19324a;
 	font: inherit;
+}
+
+.wpplugin-reservation__form input[readonly] {
+	background: #e7edf1;
+	color: #526779;
+	cursor: not-allowed;
 }
 
 .wpplugin-reservation__form input:focus,
@@ -437,13 +475,18 @@
 	}
 
 	.wpplugin-calendar__selectors {
-		display: flex;
+		display: grid;
+		grid-template-columns: repeat( 2, minmax( 0, 1fr ) );
+		gap: 0.5rem;
 		width: 100%;
 	}
 
 	.wpplugin-calendar__selectors label {
-		flex: 1 1 0;
 		min-width: 0;
+	}
+
+	.wpplugin-calendar__selectors label:first-child {
+		grid-column: 1 / -1;
 	}
 
 	.wpplugin-calendar__selectors select {
@@ -535,8 +578,13 @@
 	}
 
 	.wpplugin-facility-info dl > div {
+		grid-template-columns: max-content minmax(0, 1fr);
+		gap: 0.35rem;
+	}
+
+	.wpplugin-facility-info dl > .wpplugin-facility-info__description-row {
 		grid-template-columns: 1fr;
-		gap: 0.15rem;
+		gap: 0.35rem;
 	}
 
 	.wpplugin-reservation__time-row {

@@ -33,6 +33,16 @@ function wpplugin_sanitize_plain_textarea( $value ) {
 	return sanitize_textarea_field( wp_unslash( $value ) );
 }
 
+function wpplugin_reservation_type_for_facility( $facility ) {
+	$type = isset( $facility['reservation_type'] ) ? $facility['reservation_type'] : '時間貸';
+
+	return in_array( $type, array( '時間貸', '宿泊', '両方' ), true ) ? $type : '時間貸';
+}
+
+function wpplugin_is_valid_reservation_time( $time, $allow_midnight = false ) {
+	return (bool) preg_match( $allow_midnight ? '/^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/' : '/^(?:[01]\d|2[0-3]):[0-5]\d$/', $time );
+}
+
 function wpplugin_get_facilities() {
 	$facilities = get_option( WPPLUGIN_FACILITIES_OPTION, array() );
 	if ( ! is_array( $facilities ) || empty( $facilities ) ) {
@@ -44,6 +54,16 @@ function wpplugin_get_facilities() {
 				'start' => get_option( WPPLUGIN_FACILITY_START_OPTION, '09:00' ),
 				'end' => get_option( WPPLUGIN_FACILITY_END_OPTION, '18:00' ),
 				'info' => get_option( WPPLUGIN_FACILITY_INFO_OPTION, '施設情報未設定' ),
+				'additional_condition_1' => '',
+				'additional_fee_1' => '',
+				'additional_condition_2' => '',
+				'additional_fee_2' => '',
+				'additional_condition_3' => '',
+				'additional_fee_3' => '',
+				'reservation_type' => '時間貸',
+				'stay_start' => '15:00',
+				'stay_end' => '10:00',
+				'stay_fee' => '',
 			)
 		);
 	}
@@ -105,28 +125,56 @@ function wpplugin_save_reservation() {
 	}
 	$facility_start = $facility['start'];
 	$facility_end   = $facility['end'];
+	$facility_reservation_type = wpplugin_reservation_type_for_facility( $facility );
+	$reservation_type = isset( $_POST['reservation_type'] ) ? wpplugin_sanitize_plain_text( $_POST['reservation_type'] ) : $facility_reservation_type;
+	if ( ! in_array( $reservation_type, array( '時間貸', '宿泊' ), true ) || ( '両方' !== $facility_reservation_type && $reservation_type !== $facility_reservation_type ) ) {
+		wp_die( '予約タイプを確認してください。' );
+	}
+	$is_stay = '宿泊' === $reservation_type;
+	if ( $is_stay ) {
+		$start = $facility['stay_start'];
+		$end = '24:00';
+	}
+	$additional_quantities = array();
+	for ( $index = 1; $index <= 3; $index++ ) {
+		$additional_quantities[ $index ] = ! empty( $facility[ 'additional_condition_' . $index ] ) && isset( $_POST[ 'additional_quantity_' . $index ] ) ? max( 0, absint( $_POST[ 'additional_quantity_' . $index ] ) ) : 0;
+	}
 
-	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! preg_match( '/^\d{2}:\d{2}$/', $start ) || ! preg_match( '/^\d{2}:\d{2}$/', $end ) || '' === $title || '' === $name ) {
+	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! wpplugin_is_valid_reservation_time( $start ) || ! wpplugin_is_valid_reservation_time( $end, true ) || '' === $title || '' === $name ) {
 		wp_die( '予約内容を確認してください。' );
 	}
-	if ( $end <= $start ) {
+	if ( ! $is_stay && $end <= $start ) {
 		wp_die( '終了時刻は開始時刻より後を指定してください。' );
 	}
-	if ( $start < $facility_start || $end > $facility_end ) {
+	if ( ! $is_stay && ( $start < $facility_start || $end > $facility_end ) ) {
 		wp_die( '施設の利用可能時間内で指定してください。' );
 	}
 
 	$reservation_id = isset( $_POST['reservation_id'] ) ? absint( $_POST['reservation_id'] ) : 0;
+	$group_id = $reservation_id ? (string) get_post_meta( $reservation_id, '_wpplugin_reservation_group', true ) : '';
+	if ( ! $group_id && $reservation_id ) {
+		$group_id = (string) $reservation_id;
+	}
+	$periods = array( array( 'date' => $date, 'start' => $start, 'end' => $end ) );
+	if ( $is_stay ) {
+		$periods[] = array(
+			'date' => wp_date( 'Y-m-d', strtotime( '+1 day', strtotime( $date ) ) ),
+			'start' => '00:00',
+			'end' => $facility['stay_end'],
+		);
+	}
 	$existing_reservations = get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1 ) );
-	foreach ( $existing_reservations as $existing_reservation ) {
-		if ( $existing_reservation->ID === $reservation_id || get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_date', true ) !== $date || (string) get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_facility_id', true ) !== (string) $facility_id ) {
-			continue;
-		}
+	foreach ( $periods as $period ) {
+		foreach ( $existing_reservations as $existing_reservation ) {
+			if ( ( $group_id && (string) get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_group', true ) === $group_id ) || get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_date', true ) !== $period['date'] || (string) get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_facility_id', true ) !== (string) $facility_id ) {
+				continue;
+			}
 
-		$existing_start = get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_start', true );
-		$existing_end   = get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_end', true );
-		if ( $start < $existing_end && $end > $existing_start ) {
-			wp_die( '指定した時間帯は、すでに予約されている時間帯と重なっています。別の時間を指定してください。' );
+			$existing_start = get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_start', true );
+			$existing_end   = get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_end', true );
+			if ( $period['start'] < $existing_end && $period['end'] > $existing_start ) {
+				wp_die( '指定した時間帯は、すでに予約されている時間帯と重なっています。別の時間を指定してください。' );
+			}
 		}
 	}
 
@@ -145,12 +193,44 @@ function wpplugin_save_reservation() {
 		wp_die( '予約を保存できませんでした。' );
 	}
 
-	update_post_meta( $post_id, '_wpplugin_reservation_date', $date );
-	update_post_meta( $post_id, '_wpplugin_reservation_facility_id', $facility_id );
-	update_post_meta( $post_id, '_wpplugin_reservation_start', $start );
-	update_post_meta( $post_id, '_wpplugin_reservation_end', $end );
-	update_post_meta( $post_id, '_wpplugin_reservation_name', $name );
-	update_post_meta( $post_id, '_wpplugin_reservation_details', $details );
+	$group_id = $group_id ? $group_id : (string) $post_id;
+	$save_period = function( $reservation_post_id, $period, $part ) use ( $facility_id, $name, $details, $reservation_type, $additional_quantities, $group_id ) {
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_date', $period['date'] );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_facility_id', $facility_id );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_start', $period['start'] );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_end', $period['end'] );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_name', $name );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_details', $details );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_type', $reservation_type );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_additional_quantities', $additional_quantities );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_group', $group_id );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_stay_part', $part );
+	};
+	$save_period( $post_id, $periods[0], 'start' );
+	$group_posts = get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1, 'meta_key' => '_wpplugin_reservation_group', 'meta_value' => $group_id ) );
+	if ( $is_stay ) {
+		$end_post = null;
+		foreach ( $group_posts as $group_post ) {
+			if ( $group_post->ID !== $post_id && 'end' === get_post_meta( $group_post->ID, '_wpplugin_reservation_stay_part', true ) ) {
+				$end_post = $group_post;
+				break;
+			}
+		}
+		$end_post_id = $end_post ? $end_post->ID : wp_insert_post( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_title' => $title, 'post_status' => 'publish', 'post_author' => get_current_user_id() ), true );
+		if ( is_wp_error( $end_post_id ) ) {
+			wp_die( '予約を保存できませんでした。' );
+		}
+		if ( $end_post ) {
+			wp_update_post( array( 'ID' => $end_post_id, 'post_title' => $title ) );
+		}
+		$save_period( $end_post_id, $periods[1], 'end' );
+	} else {
+		foreach ( $group_posts as $group_post ) {
+			if ( $group_post->ID !== $post_id && 'end' === get_post_meta( $group_post->ID, '_wpplugin_reservation_stay_part', true ) ) {
+				wp_delete_post( $group_post->ID, true );
+			}
+		}
+	}
 	$redirect_url = wp_get_referer() ? wp_get_referer() : home_url( '/' );
 	wp_safe_redirect( add_query_arg( 'wpplugin_reservation_status', 'saved', $redirect_url ) );
 	exit;
@@ -168,8 +248,15 @@ function wpplugin_cancel_reservation() {
 		wp_die( 'この予約をキャンセルする権限がありません。' );
 	}
 
-	if ( ! wp_delete_post( $reservation_id, true ) ) {
-		wp_die( '予約をキャンセルできませんでした。' );
+	$group_id = (string) get_post_meta( $reservation_id, '_wpplugin_reservation_group', true );
+	$group_posts = $group_id ? get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1, 'meta_key' => '_wpplugin_reservation_group', 'meta_value' => $group_id ) ) : array();
+	if ( empty( $group_posts ) ) {
+		$group_posts = array( get_post( $reservation_id ) );
+	}
+	foreach ( $group_posts as $group_post ) {
+		if ( ! $group_post || ! wpplugin_user_can_edit_reservation( $group_post->ID ) || ! wp_delete_post( $group_post->ID, true ) ) {
+			wp_die( '予約をキャンセルできませんでした。' );
+		}
 	}
 
 	$redirect_url = wp_get_referer() ? wp_get_referer() : home_url( '/' );
@@ -183,9 +270,20 @@ function wpplugin_get_reservations() {
 	$reservations = array();
 	$posts = get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1 ) );
 	$current_user = wp_get_current_user();
+	$group_starts = array();
+	foreach ( $posts as $post ) {
+		$group_id = get_post_meta( $post->ID, '_wpplugin_reservation_group', true );
+		if ( $group_id && 'start' === get_post_meta( $post->ID, '_wpplugin_reservation_stay_part', true ) ) {
+			$group_starts[ $group_id ] = array(
+				'id' => $post->ID,
+				'date' => get_post_meta( $post->ID, '_wpplugin_reservation_date', true ),
+			);
+		}
+	}
 	foreach ( $posts as $post ) {
 		$date = get_post_meta( $post->ID, '_wpplugin_reservation_date', true );
 		if ( $date ) {
+			$group_id = get_post_meta( $post->ID, '_wpplugin_reservation_group', true );
 			$reservations[] = array(
 				'id' => $post->ID,
 				'facility_id' => get_post_meta( $post->ID, '_wpplugin_reservation_facility_id', true ) ?: 'default',
@@ -195,6 +293,11 @@ function wpplugin_get_reservations() {
 				'title' => $post->post_title,
 				'name' => get_post_meta( $post->ID, '_wpplugin_reservation_name', true ),
 				'details' => get_post_meta( $post->ID, '_wpplugin_reservation_details', true ),
+				'reservation_type' => get_post_meta( $post->ID, '_wpplugin_reservation_type', true ) ?: '時間貸',
+				'additional_quantities' => get_post_meta( $post->ID, '_wpplugin_reservation_additional_quantities', true ) ?: array(),
+				'group_id' => $group_id,
+				'group_primary_id' => isset( $group_starts[ $group_id ] ) ? $group_starts[ $group_id ]['id'] : $post->ID,
+				'group_start_date' => isset( $group_starts[ $group_id ] ) ? $group_starts[ $group_id ]['date'] : $date,
 				'can_edit' => wpplugin_user_can_edit_reservation( $post->ID, $current_user ),
 			);
 		}
@@ -299,7 +402,7 @@ function wpplugin_render_facility_phone_field() {
 
 function wpplugin_sanitize_time( $value ) {
 	$value = sanitize_text_field( $value );
-	return preg_match( '/^\d{2}:\d{2}$/', $value ) ? $value : '09:00';
+	return preg_match( '/^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/', $value ) ? $value : '09:00';
 }
 
 function wpplugin_render_facility_fee_field() {
@@ -340,6 +443,16 @@ function wpplugin_sanitize_facilities( $value ) {
 			'start' => wpplugin_sanitize_time( wp_unslash( $facility['start'] ?? '09:00' ) ),
 			'end' => wpplugin_sanitize_time( wp_unslash( $facility['end'] ?? '18:00' ) ),
 			'info' => sanitize_textarea_field( wp_unslash( $facility['info'] ?? '' ) ),
+			'additional_condition_1' => sanitize_text_field( wp_unslash( $facility['additional_condition_1'] ?? '' ) ),
+			'additional_fee_1' => sanitize_text_field( wp_unslash( $facility['additional_fee_1'] ?? '' ) ),
+			'additional_condition_2' => sanitize_text_field( wp_unslash( $facility['additional_condition_2'] ?? '' ) ),
+			'additional_fee_2' => sanitize_text_field( wp_unslash( $facility['additional_fee_2'] ?? '' ) ),
+			'additional_condition_3' => sanitize_text_field( wp_unslash( $facility['additional_condition_3'] ?? '' ) ),
+			'additional_fee_3' => sanitize_text_field( wp_unslash( $facility['additional_fee_3'] ?? '' ) ),
+			'reservation_type' => in_array( $facility['reservation_type'] ?? '時間貸', array( '時間貸', '宿泊', '両方' ), true ) ? $facility['reservation_type'] : '時間貸',
+			'stay_start' => wpplugin_sanitize_time( wp_unslash( $facility['stay_start'] ?? '15:00' ) ),
+			'stay_end' => wpplugin_sanitize_time( wp_unslash( $facility['stay_end'] ?? '10:00' ) ),
+			'stay_fee' => sanitize_text_field( wp_unslash( $facility['stay_fee'] ?? '' ) ),
 		);
 	}
 	return $facilities;
@@ -352,7 +465,7 @@ function wpplugin_render_facilities_field() {
 	}
 	?>
 	<textarea name="<?php echo esc_attr( WPPLUGIN_FACILITIES_OPTION ); ?>" rows="8" class="large-text code"><?php echo esc_textarea( wp_json_encode( $facilities, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE ) ); ?></textarea>
-	<p class="description">施設一覧をJSONで設定します。id、name、fee、start、end、infoを指定してください。</p>
+	<p class="description">施設一覧をJSONで設定します。id、name、fee、start、end、info、additional_condition_1〜3、additional_fee_1〜3、reservation_type（時間貸・宿泊・両方）、stay_start、stay_end、stay_feeを指定できます。</p>
 	<?php
 }
 
@@ -400,13 +513,13 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.css', __FILE__ ),
 		array(),
-		'1.0.23'
+		'1.0.35'
 	);
 	wp_register_script(
 		'wpplugin-calendar',
 		plugins_url( 'calendar.js', __FILE__ ),
 		array(),
-		'1.0.23',
+		'1.0.35',
 		true
 	);
 }
@@ -473,6 +586,7 @@ function wpplugin_calendar_shortcode() {
 	$selected_facility = reset( $facilities );
 	$facility_start = $selected_facility['start'];
 	$facility_end   = $selected_facility['end'];
+	$facility_type = wpplugin_reservation_type_for_facility( $selected_facility );
 	$output     = '<div class="wpplugin-calendar" data-today="' . esc_attr( $today_date ) . '" data-default-name="' . esc_attr( $current_user->user_login ) . '" data-facilities="' . esc_attr( wp_json_encode( $facilities ) ) . '" data-reservations="' . esc_attr( wp_json_encode( $reservations ) ) . '">';
 	$status = isset( $_GET['wpplugin_reservation_status'] ) ? sanitize_key( wp_unslash( $_GET['wpplugin_reservation_status'] ) ) : '';
 	if ( 'saved' === $status ) {
@@ -510,9 +624,11 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<h2>施設情報</h2>';
 	$output .= '<dl>';
 	$output .= '<div><dt>施設名</dt><dd class="wpplugin-facility-info__name">' . esc_html( $selected_facility['name'] ) . '</dd></div>';
-	$output .= '<div><dt>利用料金</dt><dd class="wpplugin-facility-info__fee">' . esc_html( $selected_facility['fee'] ) . '</dd></div>';
-	$output .= '<div><dt>利用可能時間</dt><dd class="wpplugin-facility-info__hours">' . esc_html( $facility_start . '〜' . $facility_end ) . '</dd></div>';
-	$output .= '<div><dt>施設情報</dt><dd class="wpplugin-facility-info__description">' . nl2br( esc_html( $selected_facility['info'] ) ) . '</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__fee-row"' . ( '宿泊' === $facility_type ? ' hidden' : '' ) . '><dt class="wpplugin-facility-info__fee-label">' . ( '両方' === $facility_type ? '利用料金（時間貸）' : '利用料金' ) . '</dt><dd class="wpplugin-facility-info__fee">' . esc_html( $selected_facility['fee'] ) . '</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__stay-fee-row"' . ( in_array( $facility_type, array( '両方', '宿泊' ), true ) ? '' : ' hidden' ) . '><dt>利用料金（宿泊）</dt><dd class="wpplugin-facility-info__stay-fee">' . esc_html( $selected_facility['stay_fee'] ?? '' ) . '／泊</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__hours-row"' . ( '宿泊' === $facility_type ? ' hidden' : '' ) . '><dt>利用可能時間（時間貸）</dt><dd class="wpplugin-facility-info__hours">' . esc_html( $facility_start . '〜' . $facility_end ) . '</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__stay-hours-row"' . ( in_array( $facility_type, array( '両方', '宿泊' ), true ) ? '' : ' hidden' ) . '><dt>利用可能時間（宿泊）</dt><dd class="wpplugin-facility-info__stay-hours">' . esc_html( ( $selected_facility['stay_start'] ?? '' ) . '〜' . ( $selected_facility['stay_end'] ?? '' ) ) . ' ※ 翌日</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__description-row"><dt>施設情報</dt><dd class="wpplugin-facility-info__description">' . nl2br( esc_html( $selected_facility['info'] ) ) . '</dd></div>';
 	$output .= '</dl></section>';
 	$output .= '<section class="wpplugin-reservation" hidden>'; 
 	$output .= '<h2>予約内容</h2>';
@@ -524,12 +640,15 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<p class="wpplugin-reservation__selected">選択日: <strong class="wpplugin-reservation__selected-date"></strong></p>';
 	$output .= '<p class="wpplugin-reservation__error" role="alert" hidden></p>';
 	$output .= '<input type="hidden" name="reservation_date" class="wpplugin-reservation__date" required>';
-	$output .= '<div class="wpplugin-reservation__time-row">';
+	$output .= '<label>予約タイトル<input type="text" name="reservation_title" maxlength="200" required></label>';
+	$output .= '<label>予約者名<input type="text" name="reservation_name" value="' . esc_attr( $current_user->user_login ) . '" maxlength="60" required></label>';
+	$output .= '<label class="wpplugin-reservation__type-row" hidden>予約タイプ<select name="reservation_type" class="wpplugin-reservation__type"><option value="時間貸">時間貸</option><option value="宿泊">宿泊</option></select></label>';
+	$output .= '<div class="wpplugin-reservation__time-row wpplugin-reservation__hourly-times">';
 	$output .= '<label>開始時刻' . wpplugin_render_time_options( 'reservation_start', $facility_start, $facility_end ) . '</label>';
 	$output .= '<label>終了時刻' . wpplugin_render_time_options( 'reservation_end', $facility_start, $facility_end ) . '</label>';
 	$output .= '</div>';
-	$output .= '<label>予約タイトル<input type="text" name="reservation_title" maxlength="200" required></label>';
-	$output .= '<label>予約者名<input type="text" name="reservation_name" value="' . esc_attr( $current_user->user_login ) . '" maxlength="60" required></label>';
+	$output .= '<p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong>／泊）</span></p>';
+	$output .= '<div class="wpplugin-reservation__additional-conditions"></div>';
 	$output .= '<label>詳細<textarea name="reservation_details" rows="5"></textarea></label>';
 	$output .= '<button type="submit">予約を保存</button>';
 	$output .= '<button type="submit" class="wpplugin-reservation__cancel" formaction="' . esc_url( admin_url( 'admin-post.php' ) ) . '" name="action" value="wpplugin_cancel_reservation" formmethod="post" onclick="return confirm(\'この予約をキャンセルしますか？\');" hidden>予約をキャンセル</button>';
