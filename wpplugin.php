@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name: WP Plugin Starter
- * Description: メッセージと月間カレンダーをショートコードで表示します。
+ * Plugin Name: 施設予約
+ * Description: 施設管理と予約カレンダーを提供します。
  * Version: 1.0.0
  * Requires at least: 7.0
  * Requires PHP: 7.4
- * Author: Your Name
+ * Author: t180miya
  * License: GPL-2.0-or-later
  * Text Domain: wpplugin-starter
  */
@@ -24,6 +24,11 @@ const WPPLUGIN_FACILITY_END_OPTION = 'wpplugin_facility_end';
 const WPPLUGIN_FACILITY_INFO_OPTION = 'wpplugin_facility_info';
 const WPPLUGIN_FACILITIES_OPTION = 'wpplugin_facilities';
 const WPPLUGIN_RESERVATION_POST_TYPE = 'wpplugin_reservation';
+const WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY = 'manage_wpplugin_reservations';
+const WPPLUGIN_ADMIN_MENU_SLUG = 'wpplugin-facility';
+const WPPLUGIN_FACILITY_PAGE_SLUG = 'wpplugin-facilities';
+const WPPLUGIN_CALENDAR_PAGE_SLUG = 'wpplugin-reservation-calendar';
+const WPPLUGIN_RESERVATION_LIST_PAGE_SLUG = 'wpplugin-reservations';
 
 function wpplugin_sanitize_plain_text( $value ) {
 	return sanitize_text_field( wp_unslash( $value ) );
@@ -98,14 +103,48 @@ function wpplugin_register_reservation_post_type() {
 		array(
 			'labels'       => array( 'name' => '予約', 'singular_name' => '予約' ),
 			'public'       => false,
-			'show_ui'      => true,
-			'show_in_menu' => true,
+			'show_ui'      => false,
+			'show_in_menu' => false,
 			'supports'     => array( 'title', 'author' ),
 			'capability_type' => 'post',
 		)
 	);
 }
 add_action( 'init', 'wpplugin_register_reservation_post_type' );
+
+function wpplugin_grant_reservation_management_capability() {
+	$role_names = array_merge( array( 'administrator' ), array( 'management_company', 'management-company', 'facility_manager' ) );
+	foreach ( array_unique( $role_names ) as $role_name ) {
+		$role = get_role( $role_name );
+		if ( $role ) {
+			$role->add_cap( WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY );
+		}
+	}
+}
+add_action( 'init', 'wpplugin_grant_reservation_management_capability', 20 );
+
+function wpplugin_user_has_reservation_management_capability( $allcaps, $caps, $args, $user ) {
+	if ( ! in_array( WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY, $caps, true ) ) {
+		return $allcaps;
+	}
+	if ( ! empty( $allcaps['manage_options'] ) ) {
+		$allcaps[ WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY ] = true;
+		return $allcaps;
+	}
+
+	$known_role_names = array( 'management_company', 'management-company', 'facility_manager' );
+	$role_definitions = wp_roles()->roles;
+	foreach ( (array) $user->roles as $role_name ) {
+		$role_label = isset( $role_definitions[ $role_name ]['name'] ) ? translate_user_role( $role_definitions[ $role_name ]['name'] ) : '';
+		if ( in_array( $role_name, $known_role_names, true ) || false !== stripos( $role_name, 'management' ) || false !== stripos( $role_label, 'management' ) || false !== strpos( $role_label, '管理会社' ) ) {
+			$allcaps[ WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY ] = true;
+			return $allcaps;
+		}
+	}
+
+	return $allcaps;
+}
+add_filter( 'user_has_cap', 'wpplugin_user_has_reservation_management_capability', 10, 4 );
 
 function wpplugin_save_reservation() {
 	if ( ! is_user_logged_in() || ! check_admin_referer( 'wpplugin_save_reservation', 'wpplugin_reservation_nonce' ) ) {
@@ -238,25 +277,44 @@ function wpplugin_save_reservation() {
 add_action( 'admin_post_wpplugin_save_reservation', 'wpplugin_save_reservation' );
 add_action( 'admin_post_nopriv_wpplugin_save_reservation', 'wpplugin_save_reservation' );
 
-function wpplugin_cancel_reservation() {
-	if ( ! is_user_logged_in() || ! check_admin_referer( 'wpplugin_cancel_reservation', 'wpplugin_cancel_nonce' ) ) {
-		wp_die( '予約をキャンセルできませんでした。' );
-	}
-
-	$reservation_id = isset( $_POST['reservation_id'] ) ? absint( $_POST['reservation_id'] ) : 0;
-	if ( ! $reservation_id || get_post_type( $reservation_id ) !== WPPLUGIN_RESERVATION_POST_TYPE || ! wpplugin_user_can_edit_reservation( $reservation_id ) ) {
-		wp_die( 'この予約をキャンセルする権限がありません。' );
+function wpplugin_cancel_reservation_group( $reservation_id, $user = null ) {
+	$reservation_id = absint( $reservation_id );
+	if ( ! $reservation_id || WPPLUGIN_RESERVATION_POST_TYPE !== get_post_type( $reservation_id ) || ! wpplugin_user_can_edit_reservation( $reservation_id, $user ) ) {
+		return false;
 	}
 
 	$group_id = (string) get_post_meta( $reservation_id, '_wpplugin_reservation_group', true );
 	$group_posts = $group_id ? get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1, 'meta_key' => '_wpplugin_reservation_group', 'meta_value' => $group_id ) ) : array();
 	if ( empty( $group_posts ) ) {
 		$group_posts = array( get_post( $reservation_id ) );
+	} elseif ( ! in_array( $reservation_id, wp_list_pluck( $group_posts, 'ID' ), true ) ) {
+		$group_posts[] = get_post( $reservation_id );
 	}
+	$group_posts = array_values( array_filter( $group_posts ) );
+
 	foreach ( $group_posts as $group_post ) {
-		if ( ! $group_post || ! wpplugin_user_can_edit_reservation( $group_post->ID ) || ! wp_delete_post( $group_post->ID, true ) ) {
-			wp_die( '予約をキャンセルできませんでした。' );
+		if ( WPPLUGIN_RESERVATION_POST_TYPE !== get_post_type( $group_post->ID ) || ! wpplugin_user_can_edit_reservation( $group_post->ID, $user ) ) {
+			return false;
 		}
+	}
+
+	foreach ( $group_posts as $group_post ) {
+		if ( ! wp_delete_post( $group_post->ID, true ) ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+function wpplugin_cancel_reservation() {
+	if ( ! is_user_logged_in() || ! check_admin_referer( 'wpplugin_cancel_reservation', 'wpplugin_cancel_nonce' ) ) {
+		wp_die( '予約をキャンセルできませんでした。' );
+	}
+
+	$reservation_id = isset( $_POST['reservation_id'] ) ? absint( $_POST['reservation_id'] ) : 0;
+	if ( ! wpplugin_cancel_reservation_group( $reservation_id ) ) {
+		wp_die( 'この予約をキャンセルする権限がありません。' );
 	}
 
 	$redirect_url = wp_get_referer() ? wp_get_referer() : home_url( '/' );
@@ -313,15 +371,42 @@ function wpplugin_activate() {
 register_activation_hook( __FILE__, 'wpplugin_activate' );
 
 function wpplugin_add_settings_page() {
-	add_options_page(
-		'WP Plugin Starter',
-		'WP Plugin Starter',
-		'manage_options',
-		'wpplugin-starter',
-		'wpplugin_render_settings_page'
-	);
+	add_menu_page( '施設予約', '施設予約', 'read', WPPLUGIN_ADMIN_MENU_SLUG, 'wpplugin_render_settings_page', 'dashicons-calendar-alt', 26 );
+	add_submenu_page( WPPLUGIN_ADMIN_MENU_SLUG, '施設管理', '施設管理', 'read', WPPLUGIN_FACILITY_PAGE_SLUG, 'wpplugin_render_settings_page' );
+	add_submenu_page( WPPLUGIN_ADMIN_MENU_SLUG, '予約', '予約', 'read', WPPLUGIN_CALENDAR_PAGE_SLUG, 'wpplugin_render_admin_calendar_page' );
+	add_submenu_page( WPPLUGIN_ADMIN_MENU_SLUG, '予約管理', '予約管理', 'read', WPPLUGIN_RESERVATION_LIST_PAGE_SLUG, 'wpplugin_render_reservation_management_page' );
+	remove_submenu_page( WPPLUGIN_ADMIN_MENU_SLUG, WPPLUGIN_ADMIN_MENU_SLUG );
 }
 add_action( 'admin_menu', 'wpplugin_add_settings_page' );
+
+function wpplugin_filter_reservation_admin_menu() {
+	if ( ! wpplugin_user_can_manage_reservations() ) {
+		remove_menu_page( WPPLUGIN_ADMIN_MENU_SLUG );
+	}
+}
+add_action( 'admin_menu', 'wpplugin_filter_reservation_admin_menu', 999 );
+
+function wpplugin_option_page_capability( $capability ) {
+	return WPPLUGIN_MANAGE_RESERVATIONS_CAPABILITY;
+}
+add_filter( 'option_page_capability_wpplugin_settings', 'wpplugin_option_page_capability' );
+
+function wpplugin_enqueue_facility_admin_assets( $hook_suffix ) {
+	$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+	if ( ! in_array( $page, array( WPPLUGIN_FACILITY_PAGE_SLUG, WPPLUGIN_CALENDAR_PAGE_SLUG, WPPLUGIN_RESERVATION_LIST_PAGE_SLUG ), true ) ) {
+		return;
+	}
+
+	wp_enqueue_style( 'wpplugin-facility-admin', plugins_url( 'facility-admin.css', __FILE__ ), array(), '1.0.7' );
+	if ( WPPLUGIN_FACILITY_PAGE_SLUG === $page ) {
+		wp_enqueue_script( 'wpplugin-facility-admin', plugins_url( 'facility-admin.js', __FILE__ ), array(), '1.0.0', true );
+	}
+	if ( WPPLUGIN_CALENDAR_PAGE_SLUG === $page ) {
+		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), array(), '1.0.36' );
+		wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.37', true );
+	}
+}
+add_action( 'admin_enqueue_scripts', 'wpplugin_enqueue_facility_admin_assets' );
 
 function wpplugin_register_settings() {
 	register_setting(
@@ -342,26 +427,8 @@ function wpplugin_register_settings() {
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_INFO_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'sanitize_textarea_field', 'default' => '施設情報未設定' ) );
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITIES_OPTION, array( 'type' => 'array', 'sanitize_callback' => 'wpplugin_sanitize_facilities', 'default' => array() ) );
 
-	add_settings_section(
-		'wpplugin_main_section',
-		'メッセージ設定',
-		'wpplugin_render_settings_section',
-		'wpplugin-starter'
-	);
-
-	add_settings_field(
-		'wpplugin_message_field',
-		'表示するメッセージ',
-		'wpplugin_render_message_field',
-		'wpplugin-starter',
-		'wpplugin_main_section'
-	);
-	add_settings_field( 'wpplugin_facility_name_field', '施設名', 'wpplugin_render_facility_name_field', 'wpplugin-starter', 'wpplugin_main_section' );
-	add_settings_field( 'wpplugin_facility_fee_field', '利用料金', 'wpplugin_render_facility_fee_field', 'wpplugin-starter', 'wpplugin_main_section' );
-	add_settings_field( 'wpplugin_facility_start_field', '利用可能開始時刻', 'wpplugin_render_facility_start_field', 'wpplugin-starter', 'wpplugin_main_section' );
-	add_settings_field( 'wpplugin_facility_end_field', '利用可能終了時刻', 'wpplugin_render_facility_end_field', 'wpplugin-starter', 'wpplugin_main_section' );
-	add_settings_field( 'wpplugin_facility_info_field', '施設情報', 'wpplugin_render_facility_info_field', 'wpplugin-starter', 'wpplugin_main_section' );
-	add_settings_field( 'wpplugin_facilities_field', '施設一覧', 'wpplugin_render_facilities_field', 'wpplugin-starter', 'wpplugin_main_section' );
+	add_settings_section( 'wpplugin_facility_section', '施設定義', '__return_false', WPPLUGIN_FACILITY_PAGE_SLUG );
+	add_settings_field( 'wpplugin_facilities_field', '施設一覧', 'wpplugin_render_facilities_field', WPPLUGIN_FACILITY_PAGE_SLUG, 'wpplugin_facility_section' );
 }
 add_action( 'admin_init', 'wpplugin_register_settings' );
 
@@ -463,9 +530,74 @@ function wpplugin_render_facilities_field() {
 	if ( empty( $facilities ) ) {
 		$facilities = wpplugin_get_facilities();
 	}
+	$columns = array(
+		'id' => '施設ID',
+		'name' => '施設名',
+		'reservation_type' => '時間貸／宿泊／両方',
+		'fee' => '利用料金',
+		'start' => '時間貸開始',
+		'end' => '時間貸終了',
+		'stay_start' => '宿泊開始',
+		'stay_end' => '宿泊終了',
+		'stay_fee' => '宿泊料金',
+		'additional_condition_1' => '追加条件名1',
+		'additional_fee_1' => '追加料金1',
+		'additional_condition_2' => '追加条件名2',
+		'additional_fee_2' => '追加料金2',
+		'additional_condition_3' => '追加条件名3',
+		'additional_fee_3' => '追加料金3',
+		'info' => '施設情報・説明',
+	);
 	?>
-	<textarea name="<?php echo esc_attr( WPPLUGIN_FACILITIES_OPTION ); ?>" rows="8" class="large-text code"><?php echo esc_textarea( wp_json_encode( $facilities, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE ) ); ?></textarea>
-	<p class="description">施設一覧をJSONで設定します。id、name、fee、start、end、info、additional_condition_1〜3、additional_fee_1〜3、reservation_type（時間貸・宿泊・両方）、stay_start、stay_end、stay_feeを指定できます。</p>
+	<div class="wpplugin-facility-manager" data-facilities="<?php echo esc_attr( wp_json_encode( $facilities ) ); ?>">
+		<input type="hidden" class="wpplugin-facility-manager__data" name="<?php echo esc_attr( WPPLUGIN_FACILITIES_OPTION ); ?>" value="<?php echo esc_attr( wp_json_encode( $facilities ) ); ?>" />
+		<div class="wpplugin-facility-manager__toolbar">
+			<div class="wpplugin-facility-manager__actions">
+				<button type="button" class="button button-primary" data-action="add">新規追加</button>
+				<button type="button" class="button" data-action="edit" disabled>編集</button>
+				<button type="button" class="button" data-action="delete" disabled>削除</button>
+			</div>
+			<p class="description">行を1つ選択して編集・削除できます。上下ボタンで予約画面の施設表示順を変更します。</p>
+		</div>
+		<div class="wpplugin-facility-manager__table-wrap">
+			<table class="widefat striped wpplugin-facility-manager__table">
+				<thead><tr><th scope="col" class="wpplugin-facility-manager__select-column">選択</th><?php foreach ( $columns as $label ) : ?><th scope="col"><?php echo esc_html( $label ); ?></th><?php endforeach; ?><th scope="col">表示順</th></tr></thead>
+				<tbody class="wpplugin-facility-manager__rows">
+					<?php foreach ( $facilities as $facility ) : ?>
+						<tr data-facility-id="<?php echo esc_attr( $facility['id'] ); ?>">
+							<th scope="row" class="wpplugin-facility-manager__select-column"><input type="radio" name="wpplugin_facility_selected" value="<?php echo esc_attr( $facility['id'] ); ?>" aria-label="<?php echo esc_attr( $facility['name'] ); ?>を選択" /></th>
+							<?php foreach ( $columns as $key => $label ) : ?><td><?php echo esc_html( isset( $facility[ $key ] ) ? $facility[ $key ] : '' ); ?></td><?php endforeach; ?>
+							<td class="wpplugin-facility-manager__sort"><button type="button" class="button button-small" data-action="up" aria-label="<?php echo esc_attr( $facility['name'] ); ?>を上へ">↑</button> <button type="button" class="button button-small" data-action="down" aria-label="<?php echo esc_attr( $facility['name'] ); ?>を下へ">↓</button></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p class="wpplugin-facility-manager__empty" <?php echo empty( $facilities ) ? '' : 'hidden'; ?>>施設が登録されていません。</p>
+		</div>
+		<dialog class="wpplugin-facility-manager__dialog">
+			<div class="wpplugin-facility-manager__form">
+				<h2 class="wpplugin-facility-manager__dialog-title">施設を追加</h2>
+				<input type="hidden" name="id" />
+				<div class="wpplugin-facility-manager__form-grid">
+					<label>施設名<input name="name" type="text" maxlength="200" /></label>
+					<label>予約タイプ<select name="reservation_type"><option value="時間貸">時間貸</option><option value="宿泊">宿泊</option><option value="両方">両方</option></select></label>
+					<label>時間貸料金<input name="fee" type="text" /></label>
+					<label>時間貸開始時刻<input name="start" type="text" inputmode="numeric" placeholder="09:00" value="09:00" /></label>
+					<label>時間貸終了時刻<input name="end" type="text" inputmode="numeric" placeholder="18:00" value="18:00" /></label>
+					<label>宿泊料金<input name="stay_fee" type="text" /></label>
+					<label>宿泊開始時刻<input name="stay_start" type="text" inputmode="numeric" placeholder="15:00" value="15:00" /></label>
+					<label>宿泊終了時刻<input name="stay_end" type="text" inputmode="numeric" placeholder="10:00" value="10:00" /></label>
+					<?php for ( $index = 1; $index <= 3; $index++ ) : ?>
+						<label>追加条件名<?php echo esc_html( (string) $index ); ?><input name="additional_condition_<?php echo esc_attr( (string) $index ); ?>" type="text" /></label>
+						<label>追加条件の料金<?php echo esc_html( (string) $index ); ?><input name="additional_fee_<?php echo esc_attr( (string) $index ); ?>" type="text" /></label>
+					<?php endfor; ?>
+					<label class="wpplugin-facility-manager__info">施設情報・説明<textarea name="info" rows="5"></textarea></label>
+				</div>
+				<div class="wpplugin-facility-manager__dialog-actions"><button type="button" class="button" data-action="close">キャンセル</button><button type="button" class="button button-primary" data-action="save-facility">保存</button></div>
+			</div>
+		</dialog>
+		<p class="wpplugin-facility-manager__notice" role="status" aria-live="polite"></p>
+	</div>
 	<?php
 }
 
@@ -484,22 +616,182 @@ function wpplugin_render_time_options( $name, $available_start, $available_end, 
 }
 
 function wpplugin_render_settings_page() {
-	if ( ! current_user_can( 'manage_options' ) ) {
-		return;
+	if ( ! wpplugin_user_can_manage_reservations() ) {
+		wp_die( '施設管理を表示する権限がありません。' );
 	}
 	?>
-	<div class="wrap">
-		<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+	<div class="wrap wpplugin-facility-admin-page">
+		<h1>施設管理</h1>
+		<?php settings_errors(); ?>
 		<form action="options.php" method="post">
 			<?php
 			settings_fields( 'wpplugin_settings' );
-			do_settings_sections( 'wpplugin-starter' );
+			do_settings_sections( WPPLUGIN_FACILITY_PAGE_SLUG );
 			submit_button();
 			?>
 		</form>
 	</div>
 	<?php
 }
+
+function wpplugin_render_admin_calendar_page() {
+	if ( ! wpplugin_user_can_manage_reservations() ) {
+		wp_die( '予約画面を表示する権限がありません。' );
+	}
+	?>
+	<div class="wrap wpplugin-admin-calendar">
+		<h1>予約</h1>
+		<?php echo do_shortcode( '[wpplugin_calendar]' ); ?>
+	</div>
+	<?php
+}
+
+function wpplugin_sanitize_reservation_month( $month ) {
+	$month = is_string( $month ) ? sanitize_text_field( wp_unslash( $month ) ) : '';
+	if ( ! preg_match( '/^(\d{4})-(0[1-9]|1[0-2])$/', $month, $matches ) ) {
+		return '';
+	}
+
+	return checkdate( (int) $matches[2], 1, (int) $matches[1] ) ? $month : '';
+}
+
+function wpplugin_csv_safe_value( $value ) {
+	$value = (string) $value;
+	return preg_match( '/^[\x09\x0D =+@\-]/', $value ) ? "'" . $value : $value;
+}
+
+function wpplugin_get_reservation_management_rows( $month ) {
+	$reservations = wpplugin_get_reservations();
+	$facilities = array();
+	foreach ( wpplugin_get_facilities() as $facility ) {
+		$facilities[ (string) $facility['id'] ] = $facility;
+	}
+	$rows = array();
+	foreach ( $reservations as $reservation ) {
+		if ( 'end' === get_post_meta( $reservation['id'], '_wpplugin_reservation_stay_part', true ) || 0 !== strpos( $reservation['date'], $month . '-' ) ) {
+			continue;
+		}
+
+		$facility = $facilities[ (string) $reservation['facility_id'] ] ?? null;
+		$time_label = '宿泊' === $reservation['reservation_type'] && $facility ? $reservation['start'] . '〜' . $facility['stay_end'] . '（翌日）' : $reservation['start'] . '〜' . $reservation['end'];
+		$additional_labels = array();
+		for ( $index = 1; $index <= 3; $index++ ) {
+			$quantity = isset( $reservation['additional_quantities'][ $index ] ) ? absint( $reservation['additional_quantities'][ $index ] ) : 0;
+			$condition = $facility['additional_condition_' . $index ] ?? '';
+			if ( $condition && $quantity ) {
+				$additional_labels[] = $condition . ' × ' . $quantity;
+			}
+		}
+		$rows[] = array(
+			'reservation' => $reservation,
+			'facility_name' => $facility['name'] ?? '削除済み施設',
+			'time_label' => $time_label,
+			'additional_label' => implode( '、', $additional_labels ),
+		);
+	}
+
+	usort( $rows, function( $first, $second ) {
+		return array( $second['reservation']['date'], $second['reservation']['start'] ) <=> array( $first['reservation']['date'], $first['reservation']['start'] );
+	} );
+
+	return $rows;
+}
+
+function wpplugin_render_reservation_management_page() {
+	if ( ! wpplugin_user_can_manage_reservations() ) {
+		wp_die( '予約管理を表示する権限がありません。' );
+	}
+	$month = wpplugin_sanitize_reservation_month( isset( $_GET['reservation_month'] ) ? $_GET['reservation_month'] : '' );
+	if ( ! $month ) {
+		$month = current_time( 'Y-m' );
+	}
+	$rows = wpplugin_get_reservation_management_rows( $month );
+	$status = isset( $_GET['wpplugin_reservation_admin_status'] ) ? sanitize_key( wp_unslash( $_GET['wpplugin_reservation_admin_status'] ) ) : '';
+	?>
+	<div class="wrap wpplugin-facility-admin-page">
+		<h1>予約管理</h1>
+		<?php if ( 'cancelled' === $status ) : ?><div class="notice notice-success is-dismissible"><p>予約をキャンセルしました。</p></div><?php endif; ?>
+		<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>" class="wpplugin-reservation-month-filter">
+			<input type="hidden" name="page" value="<?php echo esc_attr( WPPLUGIN_RESERVATION_LIST_PAGE_SLUG ); ?>" />
+			<label for="wpplugin-reservation-month">対象月</label>
+			<input id="wpplugin-reservation-month" type="month" name="reservation_month" value="<?php echo esc_attr( $month ); ?>" required />
+			<button type="submit" class="button">表示</button>
+		</form>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpplugin-reservation-csv-export">
+			<input type="hidden" name="action" value="wpplugin_export_reservations_csv" />
+			<input type="hidden" name="reservation_month" value="<?php echo esc_attr( $month ); ?>" />
+			<?php wp_nonce_field( 'wpplugin_export_reservations_csv', 'wpplugin_reservation_csv_nonce' ); ?>
+			<button type="submit" class="button button-primary">この月のCSVをダウンロード</button>
+		</form>
+		<div class="wpplugin-facility-manager__table-wrap">
+			<table class="widefat striped">
+				<thead><tr><th>利用日</th><th>時刻</th><th>施設</th><th>予約タイプ</th><th>予約タイトル</th><th>予約者</th><th>追加条件</th><th>詳細</th><th>操作</th></tr></thead>
+				<tbody>
+					<?php foreach ( $rows as $row ) : $reservation = $row['reservation']; ?>
+						<tr>
+							<td><?php echo esc_html( $reservation['date'] ); ?></td>
+							<td><?php echo esc_html( $row['time_label'] ); ?></td>
+							<td><?php echo esc_html( $row['facility_name'] ); ?></td>
+							<td><?php echo esc_html( $reservation['reservation_type'] ); ?></td>
+							<td><?php echo esc_html( $reservation['title'] ); ?></td>
+							<td><?php echo esc_html( $reservation['name'] ); ?></td>
+							<td><?php echo esc_html( $row['additional_label'] ); ?></td>
+							<td><?php echo esc_html( $reservation['details'] ); ?></td>
+							<td><form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('この予約をキャンセルしますか？');"><input type="hidden" name="action" value="wpplugin_admin_cancel_reservation"><input type="hidden" name="reservation_id" value="<?php echo esc_attr( (string) $reservation['id'] ); ?>"><input type="hidden" name="reservation_month" value="<?php echo esc_attr( $month ); ?>"><?php wp_nonce_field( 'wpplugin_admin_cancel_reservation', 'wpplugin_admin_cancel_nonce' ); ?><button type="submit" class="button">予約をキャンセル</button></form></td>
+						</tr>
+					<?php endforeach; ?>
+					<?php if ( empty( $rows ) ) : ?><tr><td colspan="9">予約はありません。</td></tr><?php endif; ?>
+				</tbody>
+			</table>
+		</div>
+	</div>
+	<?php
+}
+
+function wpplugin_export_reservations_csv() {
+	if ( ! wpplugin_user_can_manage_reservations() || ! check_admin_referer( 'wpplugin_export_reservations_csv', 'wpplugin_reservation_csv_nonce' ) ) {
+		wp_die( '予約一覧を出力する権限がありません。' );
+	}
+	$month = wpplugin_sanitize_reservation_month( isset( $_POST['reservation_month'] ) ? $_POST['reservation_month'] : '' );
+	if ( ! $month ) {
+		wp_die( '対象月を正しく指定してください。' );
+	}
+
+	$rows = wpplugin_get_reservation_management_rows( $month );
+	$filename = 'reservations-' . $month . '.csv';
+	nocache_headers();
+	header( 'Content-Type: text/csv; charset=UTF-8' );
+	header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+	echo "\xEF\xBB\xBF";
+	$output = fopen( 'php://output', 'w' );
+	fputcsv( $output, array( '利用日', '時刻', '施設', '予約タイプ', '予約タイトル', '予約者', '追加条件', '詳細' ), ',', '"', '\\' );
+	foreach ( $rows as $row ) {
+		$reservation = $row['reservation'];
+		$csv_row = array( $reservation['date'], $row['time_label'], $row['facility_name'], $reservation['reservation_type'], $reservation['title'], $reservation['name'], $row['additional_label'], $reservation['details'] );
+		fputcsv( $output, array_map( 'wpplugin_csv_safe_value', $csv_row ), ',', '"', '\\' );
+	}
+	fclose( $output );
+	exit;
+}
+add_action( 'admin_post_wpplugin_export_reservations_csv', 'wpplugin_export_reservations_csv' );
+
+function wpplugin_admin_cancel_reservation() {
+	if ( ! wpplugin_user_can_manage_reservations() || ! check_admin_referer( 'wpplugin_admin_cancel_reservation', 'wpplugin_admin_cancel_nonce' ) ) {
+		wp_die( '予約をキャンセルする権限がありません。' );
+	}
+	$reservation_id = isset( $_POST['reservation_id'] ) ? absint( $_POST['reservation_id'] ) : 0;
+	if ( ! wpplugin_cancel_reservation_group( $reservation_id ) ) {
+		wp_die( '予約をキャンセルできませんでした。本人または管理権限を確認してください。' );
+	}
+	$month = wpplugin_sanitize_reservation_month( isset( $_POST['reservation_month'] ) ? $_POST['reservation_month'] : '' );
+	$redirect_args = array( 'page' => WPPLUGIN_RESERVATION_LIST_PAGE_SLUG, 'wpplugin_reservation_admin_status' => 'cancelled' );
+	if ( $month ) {
+		$redirect_args['reservation_month'] = $month;
+	}
+	wp_safe_redirect( add_query_arg( $redirect_args, admin_url( 'admin.php' ) ) );
+	exit;
+}
+add_action( 'admin_post_wpplugin_admin_cancel_reservation', 'wpplugin_admin_cancel_reservation' );
 
 function wpplugin_message_shortcode() {
 	$message = get_option( WPPLUGIN_OPTION_NAME, 'Hello from WP Plugin Starter!' );
@@ -513,13 +805,13 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.css', __FILE__ ),
 		array(),
-		'1.0.35'
+		'1.0.36'
 	);
 	wp_register_script(
 		'wpplugin-calendar',
 		plugins_url( 'calendar.js', __FILE__ ),
 		array(),
-		'1.0.35',
+		'1.0.37',
 		true
 	);
 }
@@ -587,6 +879,14 @@ function wpplugin_calendar_shortcode() {
 	$facility_start = $selected_facility['start'];
 	$facility_end   = $selected_facility['end'];
 	$facility_type = wpplugin_reservation_type_for_facility( $selected_facility );
+	$hourly_fee = (string) ( $selected_facility['fee'] ?? '' );
+	if ( '' !== $hourly_fee && '料金未設定' !== $hourly_fee && false === strpos( $hourly_fee, '円' ) ) {
+		$hourly_fee .= ' 円';
+	}
+	$stay_fee = (string) ( $selected_facility['stay_fee'] ?? '' );
+	if ( '' !== $stay_fee && '料金未設定' !== $stay_fee && false === strpos( $stay_fee, '円' ) ) {
+		$stay_fee .= ' 円';
+	}
 	$output     = '<div class="wpplugin-calendar" data-today="' . esc_attr( $today_date ) . '" data-default-name="' . esc_attr( $current_user->user_login ) . '" data-facilities="' . esc_attr( wp_json_encode( $facilities ) ) . '" data-reservations="' . esc_attr( wp_json_encode( $reservations ) ) . '">';
 	$status = isset( $_GET['wpplugin_reservation_status'] ) ? sanitize_key( wp_unslash( $_GET['wpplugin_reservation_status'] ) ) : '';
 	if ( 'saved' === $status ) {
@@ -624,8 +924,8 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<h2>施設情報</h2>';
 	$output .= '<dl>';
 	$output .= '<div><dt>施設名</dt><dd class="wpplugin-facility-info__name">' . esc_html( $selected_facility['name'] ) . '</dd></div>';
-	$output .= '<div class="wpplugin-facility-info__fee-row"' . ( '宿泊' === $facility_type ? ' hidden' : '' ) . '><dt class="wpplugin-facility-info__fee-label">' . ( '両方' === $facility_type ? '利用料金（時間貸）' : '利用料金' ) . '</dt><dd class="wpplugin-facility-info__fee">' . esc_html( $selected_facility['fee'] ) . '</dd></div>';
-	$output .= '<div class="wpplugin-facility-info__stay-fee-row"' . ( in_array( $facility_type, array( '両方', '宿泊' ), true ) ? '' : ' hidden' ) . '><dt>利用料金（宿泊）</dt><dd class="wpplugin-facility-info__stay-fee">' . esc_html( $selected_facility['stay_fee'] ?? '' ) . '／泊</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__fee-row"' . ( '宿泊' === $facility_type ? ' hidden' : '' ) . '><dt class="wpplugin-facility-info__fee-label">' . ( '両方' === $facility_type ? '利用料金（時間貸）' : '利用料金' ) . '</dt><dd class="wpplugin-facility-info__fee">' . esc_html( $hourly_fee ) . '</dd></div>';
+	$output .= '<div class="wpplugin-facility-info__stay-fee-row"' . ( in_array( $facility_type, array( '両方', '宿泊' ), true ) ? '' : ' hidden' ) . '><dt>利用料金（宿泊）</dt><dd class="wpplugin-facility-info__stay-fee">' . esc_html( $stay_fee ) . '／泊</dd></div>';
 	$output .= '<div class="wpplugin-facility-info__hours-row"' . ( '宿泊' === $facility_type ? ' hidden' : '' ) . '><dt>利用可能時間（時間貸）</dt><dd class="wpplugin-facility-info__hours">' . esc_html( $facility_start . '〜' . $facility_end ) . '</dd></div>';
 	$output .= '<div class="wpplugin-facility-info__stay-hours-row"' . ( in_array( $facility_type, array( '両方', '宿泊' ), true ) ? '' : ' hidden' ) . '><dt>利用可能時間（宿泊）</dt><dd class="wpplugin-facility-info__stay-hours">' . esc_html( ( $selected_facility['stay_start'] ?? '' ) . '〜' . ( $selected_facility['stay_end'] ?? '' ) ) . ' ※ 翌日</dd></div>';
 	$output .= '<div class="wpplugin-facility-info__description-row"><dt>施設情報</dt><dd class="wpplugin-facility-info__description">' . nl2br( esc_html( $selected_facility['info'] ) ) . '</dd></div>';
@@ -647,7 +947,7 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<label>開始時刻' . wpplugin_render_time_options( 'reservation_start', $facility_start, $facility_end ) . '</label>';
 	$output .= '<label>終了時刻' . wpplugin_render_time_options( 'reservation_end', $facility_start, $facility_end ) . '</label>';
 	$output .= '</div>';
-	$output .= '<p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong>／泊）</span></p>';
+	$output .= '<p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong> 円／泊）</span></p>';
 	$output .= '<div class="wpplugin-reservation__additional-conditions"></div>';
 	$output .= '<label>詳細<textarea name="reservation_details" rows="5"></textarea></label>';
 	$output .= '<button type="submit">予約を保存</button>';

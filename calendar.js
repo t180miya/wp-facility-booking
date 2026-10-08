@@ -108,7 +108,7 @@
 			const stayFeeRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee-row' );
 			stayFeeRow.hidden = ! ( isBoth || isStayOnly );
 			if ( isBoth || isStayOnly ) {
-				calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee' ).textContent = `${ String( selectedFacility.stay_fee || '' ) }／泊`;
+				calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee' ).textContent = `${ String( selectedFacility.stay_fee || '' ) } 円／泊`;
 			}
 			const stayHoursRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-hours-row' );
 			stayHoursRow.hidden = ! ( isBoth || isStayOnly );
@@ -172,7 +172,8 @@
 			conditions.innerHTML = [ 1, 2, 3 ].map( ( index ) => {
 				const condition = String( selectedFacility[ `additional_condition_${ index }` ] || '' );
 				const fee = String( selectedFacility[ `additional_fee_${ index }` ] || '' );
-				return condition ? `<label>${ escapeHtml( condition ) }${ fee ? `（${ escapeHtml( fee ) }）` : '' }<input type="number" name="additional_quantity_${ index }" min="0" step="1" value="0"></label>` : '';
+				const feeLabel = fee && ! fee.includes( '円' ) ? `${ fee } 円` : fee;
+				return condition ? `<label>${ escapeHtml( condition ) }${ feeLabel ? `（${ escapeHtml( feeLabel ) }）` : '' }<input type="number" name="additional_quantity_${ index }" min="0" step="1" value="0"></label>` : '';
 			} ).join( '' );
 		};
 		const reservationMarkup = ( date ) => reservationsFor( date ).slice( 0, 3 ).map( ( reservation ) => {
@@ -396,8 +397,11 @@
 					reservation.querySelector( '.wpplugin-reservation__date' ).value = selected.group_start_date || selected.date;
 					reservation.querySelector( '.wpplugin-reservation__type' ).value = selected.reservation_type || '時間貸';
 					updateReservationFields();
-					( selected.additional_quantities || [] ).forEach( ( quantity, index ) => {
-						const input = reservation.querySelector( `[name="additional_quantity_${ index + 1 }"]` );
+						const quantities = Array.isArray( selected.additional_quantities )
+							? selected.additional_quantities.map( ( quantity, index ) => [ index + 1, quantity ] )
+							: Object.entries( selected.additional_quantities || {} );
+					quantities.forEach( ( [ index, quantity ] ) => {
+						const input = reservation.querySelector( `[name="additional_quantity_${ index }"]` );
 						if ( input ) {
 							input.value = quantity;
 						}

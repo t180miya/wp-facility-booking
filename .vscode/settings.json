@@ -3,6 +3,26 @@
         "/^Set-Location 'C:\\\\Users\\\\tmiya\\\\OneDrive\\\\デスクトップ\\\\wp-facility-booking'; php -l wpplugin\\.php$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^php -l wpplugin\\.php$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^php -l wpplugin\\.php; node --check facility-admin\\.js$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^php -l wpplugin\\.php; git diff --check$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^php -l wpplugin\\.php; node --check facility-admin\\.js; git diff --check$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^php -l wpplugin\\.php; git diff --check; Select-String -Path wpplugin\\.php -Pattern \"facility-admin\\.css\"$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }
