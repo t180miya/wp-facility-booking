@@ -78,6 +78,9 @@
 					cell.textContent = String( facility[ key ] || '' );
 					row.append( cell );
 				} );
+				const notifyCell = document.createElement( 'td' );
+				notifyCell.textContent = facility.notify_management && facility.notify_management !== '0' ? 'あり' : 'なし';
+				row.append( notifyCell );
 
 				const sortCell = document.createElement( 'td' );
 				sortCell.className = 'wpplugin-facility-manager__sort';
@@ -101,6 +104,10 @@
 		const openEditor = ( facility, isNew ) => {
 			title.textContent = isNew ? '施設を追加' : '施設を編集';
 			form.querySelectorAll( '[name]' ).forEach( ( input ) => {
+				if ( input.type === 'checkbox' ) {
+					input.checked = Boolean( facility[ input.name ] ) && facility[ input.name ] !== '0';
+					return;
+				}
 				input.value = Object.prototype.hasOwnProperty.call( facility, input.name ) ? facility[ input.name ] : '';
 			} );
 			if ( isNew ) {
@@ -127,6 +134,7 @@
 				return;
 			}
 			const facility = Object.fromEntries( fields.map( ( [ key ] ) => [ key, form.querySelector( `[name="${ key }"]` ).value.trim() ] ) );
+			facility.notify_management = form.querySelector( '[name="notify_management"]' ).checked ? '1' : '';
 			const isNew = ! facility.id;
 			if ( isNew ) {
 				const baseId = `facility-${ Date.now().toString( 36 ) }`;

@@ -126,6 +126,14 @@ table.form-table:has(.wpplugin-facility-manager) td {
 }
 
 .wpplugin-facility-manager__table th:nth-child(18),
+.wpplugin-facility-manager__table td:nth-child(18) {
+	width: 120px;
+	min-width: 120px;
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.wpplugin-facility-manager__table th:nth-child(19),
 .wpplugin-facility-manager__table td.wpplugin-facility-manager__sort {
 	width: 70px;
 	min-width: 70px !important;
@@ -194,6 +202,28 @@ table.form-table:has(.wpplugin-facility-manager) td {
 
 .wpplugin-facility-manager__info {
 	grid-column: 1 / -1;
+}
+
+.wpplugin-facility-manager__form-grid label.wpplugin-facility-manager__check {
+	display: flex;
+	grid-column: 1 / -1;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 6px;
+}
+
+.wpplugin-facility-manager__form-grid label.wpplugin-facility-manager__check input {
+	width: auto;
+	margin: 0;
+}
+
+.wpplugin-reservation-filter-links {
+	margin-left: 5em;
+}
+
+.wpplugin-reservation-filter-links a.current {
+	font-weight: 600;
+	color: inherit;
 }
 
 .wpplugin-facility-manager__dialog-actions {

@@ -315,6 +315,20 @@
 	font-weight: 700;
 }
 
+.wpplugin-reservation__form label.wpplugin-reservation__cost {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 0.5rem;
+}
+
+.wpplugin-reservation__form .wpplugin-reservation__cost input[type="checkbox"] {
+	flex: 0 0 auto;
+	width: auto;
+	margin: 0;
+	padding: 0;
+}
+
 .wpplugin-reservation__type-row[hidden],
 .wpplugin-reservation__hourly-times[hidden],
 .wpplugin-reservation__stay-fee[hidden] {
