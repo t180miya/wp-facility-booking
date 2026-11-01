@@ -144,10 +144,23 @@ function wpplugin_user_can_manage_reservations( $user = null ) {
 	return user_can( $user, 'manage_options' ) || user_can( $user, 'manage_wpplugin_reservations' ) || (bool) array_intersect( $management_roles, (array) $user->roles );
 }
 
+function wpplugin_get_reservation_email( $post_id ) {
+	if ( metadata_exists( 'post', $post_id, '_wpplugin_reservation_email' ) ) {
+		$email = get_post_meta( $post_id, '_wpplugin_reservation_email', true );
+	} else {
+		$author = get_userdata( (int) get_post_field( 'post_author', $post_id ) );
+		$email = $author ? $author->user_email : '';
+	}
+
+	return is_string( $email ) && is_email( $email ) ? $email : '';
+}
+
 function wpplugin_user_can_edit_reservation( $post_id, $user = null ) {
 	$user = $user ? $user : wp_get_current_user();
+	$reservation_email = wpplugin_get_reservation_email( $post_id );
+	$user_email = isset( $user->user_email ) ? $user->user_email : '';
 
-	return wpplugin_user_can_manage_reservations( $user ) || (int) get_post_field( 'post_author', $post_id ) === (int) $user->ID;
+	return wpplugin_user_can_manage_reservations( $user ) || ( $reservation_email && is_string( $user_email ) && is_email( $user_email ) && 0 === strcasecmp( $reservation_email, $user_email ) );
 }
 
 function wpplugin_register_reservation_post_type() {
@@ -222,6 +235,19 @@ function wpplugin_get_actor_label( $user = null ) {
 	return $user->display_name . '（' . $user->user_login . '）' . $suffix;
 }
 
+function wpplugin_get_reservation_default_name( $user = null ) {
+	$user = $user ? $user : wp_get_current_user();
+	if ( ! $user || ! $user->ID ) {
+		return '';
+	}
+
+	$last_name = trim( (string) get_user_meta( $user->ID, 'last_name', true ) );
+	$first_name = trim( (string) get_user_meta( $user->ID, 'first_name', true ) );
+	$profile_name = trim( $last_name . ' ' . $first_name );
+
+	return '' !== $profile_name ? $profile_name : $user->user_login;
+}
+
 function wpplugin_get_reservation_status( $post_id ) {
 	return WPPLUGIN_STATUS_TENTATIVE === get_post_meta( $post_id, '_wpplugin_reservation_status', true ) ? WPPLUGIN_STATUS_TENTATIVE : WPPLUGIN_STATUS_CONFIRMED;
 }
@@ -272,17 +298,16 @@ function wpplugin_get_reservation_notification_data( $reservation_id ) {
 			$additional[] = $facility[ 'additional_condition_' . $index ] . ' × ' . $quantity;
 		}
 	}
-	$author = get_userdata( (int) $primary->post_author );
-
 	return array(
 		'id'            => $primary->ID,
-		'email'         => $author ? $author->user_email : '',
+		'email'         => wpplugin_get_reservation_email( $primary->ID ),
 		'facility_name' => $facility ? $facility['name'] : '削除済み施設',
 		'date'          => get_post_meta( $primary->ID, '_wpplugin_reservation_date', true ),
 		'time_label'    => $time_label,
 		'type'          => $type,
 		'title'         => $primary->post_title,
 		'name'          => get_post_meta( $primary->ID, '_wpplugin_reservation_name', true ),
+		'room_number'   => get_post_meta( $primary->ID, '_wpplugin_reservation_room_number', true ),
 		'additional'    => implode( '、', $additional ),
 		'details'       => get_post_meta( $primary->ID, '_wpplugin_reservation_details', true ),
 		'status'        => wpplugin_get_reservation_status( $primary->ID ),
@@ -314,7 +339,9 @@ function wpplugin_log_reservation_summary( $data ) {
 		'時刻：' . $data['time_label'],
 		'予約タイプ：' . $data['type'],
 		'予約タイトル：' . $data['title'],
-		'予約者：' . $data['name'],
+		'予約者氏名：' . $data['name'],
+		'メールアドレス：' . $data['email'],
+		'予約者部屋番号：' . $data['room_number'],
 		'追加条件：' . $data['additional'],
 		'管理組合が費用を負担：' . ( $data['cost_by_association'] ? 'はい' : 'いいえ' ),
 		'詳細：' . $data['details'],
@@ -353,7 +380,9 @@ function wpplugin_send_reservation_mail( $to, $subject, $lead, $data, $footer = 
 		'時刻：' . $data['time_label'],
 		'予約タイプ：' . $data['type'],
 		'予約タイトル：' . $data['title'],
-		'予約者：' . $data['name'],
+		'予約者氏名：' . $data['name'],
+		'メールアドレス：' . $data['email'],
+		'予約者部屋番号：' . $data['room_number'],
 		'追加条件：' . $data['additional'],
 		'詳細：' . $data['details'],
 	);
@@ -380,15 +409,21 @@ function wpplugin_notify_applicant( $data, $kind ) {
 }
 
 function wpplugin_notify_management_company( $data, $confirmed = false ) {
-	$to = get_option( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, '' );
-	if ( ! is_string( $to ) || preg_match( '/[\r\n,;<>"\s]/', $to ) ) {
+	$recipients = wpplugin_get_management_emails();
+	if ( ! $recipients ) {
 		return;
 	}
 	if ( $confirmed ) {
-		wpplugin_send_reservation_mail( $to, '予約がありました（内容のご確認）', '以下の予約が登録されました。承認の操作は不要ですが、予約内容をご確認ください。', $data, admin_url( 'admin.php?page=' . WPPLUGIN_RESERVATION_LIST_PAGE_SLUG ) );
-		return;
+		$subject = '予約がありました（内容のご確認）';
+		$lead = '以下の予約が登録されました。承認の操作は不要ですが、予約内容をご確認ください。';
+	} else {
+		$subject = '仮予約の承認をお願いします';
+		$lead = '以下の予約が「管理組合が費用を負担」の仮予約として申請されました。予約管理画面で内容を確認し、承認または却下してください。';
 	}
-	wpplugin_send_reservation_mail( $to, '仮予約の承認をお願いします', '以下の予約が「管理組合が費用を負担」の仮予約として申請されました。予約管理画面で内容を確認し、承認または却下してください。', $data, admin_url( 'admin.php?page=' . WPPLUGIN_RESERVATION_LIST_PAGE_SLUG ) );
+	$footer = admin_url( 'admin.php?page=' . WPPLUGIN_RESERVATION_LIST_PAGE_SLUG );
+	foreach ( $recipients as $recipient ) {
+		wpplugin_send_reservation_mail( $recipient, $subject, $lead, $data, $footer );
+	}
 }
 
 function wpplugin_save_reservation() {
@@ -401,6 +436,9 @@ function wpplugin_save_reservation() {
 	$end   = isset( $_POST['reservation_end'] ) ? wpplugin_sanitize_plain_text( $_POST['reservation_end'] ) : '';
 	$title = isset( $_POST['reservation_title'] ) ? wpplugin_sanitize_plain_text( $_POST['reservation_title'] ) : '';
 	$name  = isset( $_POST['reservation_name'] ) ? wpplugin_sanitize_plain_text( $_POST['reservation_name'] ) : '';
+	$reservation_email = sanitize_email( wp_get_current_user()->user_email );
+	$room_number = isset( $_POST['reservation_room_number'] ) && is_string( $_POST['reservation_room_number'] ) ? trim( mb_convert_kana( wp_unslash( $_POST['reservation_room_number'] ), 'a', 'UTF-8' ) ) : '';
+	$room_number = sanitize_text_field( $room_number );
 	$details = isset( $_POST['reservation_details'] ) ? wpplugin_sanitize_plain_textarea( $_POST['reservation_details'] ) : '';
 	$facility_id = isset( $_POST['facility_id'] ) ? sanitize_key( wp_unslash( $_POST['facility_id'] ) ) : 'default';
 	$facility = wpplugin_get_facility( $facility_id );
@@ -424,8 +462,17 @@ function wpplugin_save_reservation() {
 		$additional_quantities[ $index ] = ! empty( $facility[ 'additional_condition_' . $index ] ) && isset( $_POST[ 'additional_quantity_' . $index ] ) ? max( 0, absint( $_POST[ 'additional_quantity_' . $index ] ) ) : 0;
 	}
 
-	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! wpplugin_is_valid_reservation_time( $start ) || ! wpplugin_is_valid_reservation_time( $end, true ) || '' === $title || '' === $name ) {
+	if ( '' === $name || '' === $room_number ) {
+		wp_die( '予約者氏名と予約者部屋番号は必須です。' );
+	}
+	if ( ! is_email( $reservation_email ) ) {
+		wp_die( 'ユーザーのメールアドレスを確認してください。' );
+	}
+	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! wpplugin_is_valid_reservation_time( $start ) || ! wpplugin_is_valid_reservation_time( $end, true ) || '' === $title ) {
 		wp_die( '予約内容を確認してください。' );
+	}
+	if ( ! preg_match( '/^[A-Za-z0-9]+$/', $room_number ) ) {
+		wp_die( '予約者部屋番号は半角英数字で入力してください。' );
 	}
 	if ( ! $is_stay && $end <= $start ) {
 		wp_die( '終了時刻は開始時刻より後を指定してください。' );
@@ -502,7 +549,7 @@ function wpplugin_save_reservation() {
 	}
 
 	$group_id = $group_id ? $group_id : (string) $post_id;
-	$save_period = function( $reservation_post_id, $period, $part ) use ( $facility_id, $name, $details, $reservation_type, $additional_quantities, $group_id, $new_status, $cost_by_association ) {
+	$save_period = function( $reservation_post_id, $period, $part ) use ( $facility_id, $name, $reservation_email, $room_number, $details, $reservation_type, $additional_quantities, $group_id, $new_status, $cost_by_association ) {
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_status', $new_status );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_cost_by_association', $cost_by_association ? '1' : '0' );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_date', $period['date'] );
@@ -510,6 +557,8 @@ function wpplugin_save_reservation() {
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_start', $period['start'] );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_end', $period['end'] );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_name', $name );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_email', $reservation_email );
+		update_post_meta( $reservation_post_id, '_wpplugin_reservation_room_number', $room_number );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_details', $details );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_type', $reservation_type );
 		update_post_meta( $reservation_post_id, '_wpplugin_reservation_additional_quantities', $additional_quantities );
@@ -644,23 +693,26 @@ function wpplugin_get_reservations() {
 		$date = get_post_meta( $post->ID, '_wpplugin_reservation_date', true );
 		if ( $date ) {
 			$group_id = get_post_meta( $post->ID, '_wpplugin_reservation_group', true );
+			$can_edit = wpplugin_user_can_edit_reservation( $post->ID, $current_user );
 			$reservations[] = array(
 				'id' => $post->ID,
 				'facility_id' => get_post_meta( $post->ID, '_wpplugin_reservation_facility_id', true ) ?: 'default',
 				'date' => $date,
 				'start' => get_post_meta( $post->ID, '_wpplugin_reservation_start', true ),
 				'end' => get_post_meta( $post->ID, '_wpplugin_reservation_end', true ),
-				'title' => $post->post_title,
-				'name' => get_post_meta( $post->ID, '_wpplugin_reservation_name', true ),
-				'details' => get_post_meta( $post->ID, '_wpplugin_reservation_details', true ),
+				'title' => $can_edit ? $post->post_title : '予約済み',
+				'name' => $can_edit ? get_post_meta( $post->ID, '_wpplugin_reservation_name', true ) : '',
+				'email' => $can_edit ? wpplugin_get_reservation_email( $post->ID ) : '',
+				'room_number' => $can_edit ? get_post_meta( $post->ID, '_wpplugin_reservation_room_number', true ) : '',
+				'details' => $can_edit ? get_post_meta( $post->ID, '_wpplugin_reservation_details', true ) : '',
 				'reservation_type' => get_post_meta( $post->ID, '_wpplugin_reservation_type', true ) ?: '時間貸',
-				'additional_quantities' => get_post_meta( $post->ID, '_wpplugin_reservation_additional_quantities', true ) ?: array(),
+				'additional_quantities' => $can_edit ? ( get_post_meta( $post->ID, '_wpplugin_reservation_additional_quantities', true ) ?: array() ) : array(),
 				'group_id' => $group_id,
 				'status' => wpplugin_get_reservation_status( $post->ID ),
 				'cost_by_association' => '1' === get_post_meta( $post->ID, '_wpplugin_reservation_cost_by_association', true ),
 				'group_primary_id' => isset( $group_starts[ $group_id ] ) ? $group_starts[ $group_id ]['id'] : $post->ID,
 				'group_start_date' => isset( $group_starts[ $group_id ] ) ? $group_starts[ $group_id ]['date'] : $date,
-				'can_edit' => wpplugin_user_can_edit_reservation( $post->ID, $current_user ),
+				'can_edit' => $can_edit,
 			);
 		}
 	}
@@ -702,8 +754,8 @@ function wpplugin_enqueue_facility_admin_assets( $hook_suffix ) {
 		wp_enqueue_script( 'wpplugin-facility-admin', plugins_url( 'facility-admin.js', __FILE__ ), array(), '1.0.2', true );
 	}
 	if ( WPPLUGIN_CALENDAR_PAGE_SLUG === $page ) {
-		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), array(), '1.0.37' );
-		wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.38', true );
+		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), array(), '1.0.40' );
+		wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.43', true );
 	}
 }
 add_action( 'admin_enqueue_scripts', 'wpplugin_enqueue_facility_admin_assets' );
@@ -751,13 +803,50 @@ function wpplugin_sanitize_management_email( $value ) {
 	if ( '' === $value ) {
 		return '';
 	}
-	// 改行・複数宛先・表示名付き形式を拒否し、単一のメールアドレスだけを許可する。
-	if ( strlen( $value ) > 254 || preg_match( '/[\r\n,;<>"\s]/', $value ) || ! is_email( $value ) ) {
+	if ( strlen( $value ) > 2048 || preg_match( '/[\r\n;]/', $value ) ) {
 		add_settings_error( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, 'wpplugin_invalid_management_email', '管理会社のメールアドレスの形式が正しくありません。以前の設定を維持しました。' );
 		return $previous;
 	}
 
-	return sanitize_email( $value );
+	$emails = array();
+	$seen = array();
+	foreach ( explode( ',', $value ) as $email ) {
+		$email = trim( $email );
+		if ( strlen( $email ) > 254 || ! is_email( $email ) ) {
+			add_settings_error( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, 'wpplugin_invalid_management_email', '管理会社のメールアドレスの形式が正しくありません。以前の設定を維持しました。' );
+			return $previous;
+		}
+		$email = sanitize_email( $email );
+		if ( ! is_email( $email ) ) {
+			add_settings_error( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, 'wpplugin_invalid_management_email', '管理会社のメールアドレスの形式が正しくありません。以前の設定を維持しました。' );
+			return $previous;
+		}
+		$key = strtolower( $email );
+		if ( ! isset( $seen[ $key ] ) ) {
+			$emails[] = $email;
+			$seen[ $key ] = true;
+		}
+	}
+
+	return implode( ', ', $emails );
+}
+
+function wpplugin_get_management_emails() {
+	$value = get_option( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, '' );
+	if ( ! is_string( $value ) || '' === trim( $value ) || preg_match( '/[\r\n;]/', $value ) ) {
+		return array();
+	}
+
+	$emails = array();
+	foreach ( explode( ',', $value ) as $email ) {
+		$email = trim( $email );
+		if ( strlen( $email ) > 254 || ! is_email( $email ) ) {
+			return array();
+		}
+		$emails[] = $email;
+	}
+
+	return array_values( array_unique( $emails ) );
 }
 
 function wpplugin_render_booking_deadline_field() {
@@ -776,8 +865,8 @@ function wpplugin_render_cancel_deadline_field() {
 
 function wpplugin_render_management_email_field() {
 	?>
-	<input type="email" name="<?php echo esc_attr( WPPLUGIN_MANAGEMENT_EMAIL_OPTION ); ?>" value="<?php echo esc_attr( get_option( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, '' ) ); ?>" class="regular-text" maxlength="254" autocomplete="off" spellcheck="false" />
-	<p class="description">「管理組合が費用を負担」の仮予約や、「予約時管理会社に通知」が有効な施設の予約があったとき、このアドレスに通知します。メールアドレスは1件のみ指定できます。空欄の場合は通知しません。</p>
+	<input type="text" name="<?php echo esc_attr( WPPLUGIN_MANAGEMENT_EMAIL_OPTION ); ?>" value="<?php echo esc_attr( get_option( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, '' ) ); ?>" class="regular-text" maxlength="2048" autocomplete="off" spellcheck="false" />
+	<p class="description">「管理組合が費用を負担」の仮予約や、「予約時管理会社に通知」が有効な施設の予約があったとき、カンマ区切りで指定した各アドレスに通知します。空欄の場合は通知しません。</p>
 	<?php
 }
 
@@ -875,12 +964,8 @@ function wpplugin_sanitize_facilities( $value ) {
 	return $facilities;
 }
 
-function wpplugin_render_facilities_field() {
-	$facilities = get_option( WPPLUGIN_FACILITIES_OPTION, array() );
-	if ( empty( $facilities ) ) {
-		$facilities = wpplugin_get_facilities();
-	}
-	$columns = array(
+function wpplugin_facility_columns() {
+	return array(
 		'id' => '施設ID',
 		'name' => '施設名',
 		'reservation_type' => '時間貸／宿泊／両方',
@@ -899,6 +984,116 @@ function wpplugin_render_facilities_field() {
 		'info' => '施設情報・説明',
 		'notify_management' => '予約時管理会社に通知',
 	);
+}
+
+function wpplugin_export_facilities_csv() {
+	if ( ! wpplugin_user_can_manage_reservations() || ! check_admin_referer( 'wpplugin_export_facilities_csv', 'wpplugin_facility_csv_nonce' ) ) {
+		wp_die( '施設定義を出力する権限がありません。' );
+	}
+	$facilities = get_option( WPPLUGIN_FACILITIES_OPTION, array() );
+	if ( empty( $facilities ) ) {
+		$facilities = wpplugin_get_facilities();
+	}
+	$columns = wpplugin_facility_columns();
+	nocache_headers();
+	header( 'Content-Type: text/csv; charset=UTF-8' );
+	header( 'Content-Disposition: attachment; filename="facilities-' . gmdate( 'Ymd-His' ) . '.csv"' );
+	echo "\xEF\xBB\xBF";
+	$output = fopen( 'php://output', 'w' );
+	fputcsv( $output, array_values( $columns ), ',', '"', '\\' );
+	foreach ( $facilities as $facility ) {
+		$row = array();
+		foreach ( array_keys( $columns ) as $key ) {
+			$row[] = wpplugin_csv_safe_value( $facility[ $key ] ?? '' );
+		}
+		fputcsv( $output, $row, ',', '"', '\\' );
+	}
+	fclose( $output );
+	exit;
+}
+add_action( 'admin_post_wpplugin_export_facilities_csv', 'wpplugin_export_facilities_csv' );
+
+function wpplugin_import_facilities_csv() {
+	if ( ! wpplugin_user_can_manage_reservations() || ! check_admin_referer( 'wpplugin_import_facilities_csv', 'wpplugin_facility_csv_nonce' ) ) {
+		wp_die( '施設定義を取り込む権限がありません。' );
+	}
+	$redirect = static function ( $result, $count = 0 ) {
+		wp_safe_redirect( add_query_arg( array( 'page' => WPPLUGIN_FACILITY_PAGE_SLUG, 'wpplugin_facility_import' => $result, 'count' => $count ), admin_url( 'admin.php' ) ) );
+		exit;
+	};
+	if ( empty( $_FILES['facility_csv']['tmp_name'] ) || ! is_uploaded_file( $_FILES['facility_csv']['tmp_name'] ) || UPLOAD_ERR_OK !== (int) $_FILES['facility_csv']['error'] ) {
+		$redirect( 'nofile' );
+	}
+	$contents = file_get_contents( $_FILES['facility_csv']['tmp_name'] );
+	if ( false === $contents ) {
+		$redirect( 'invalid' );
+	}
+	$contents = preg_replace( '/^\xEF\xBB\xBF/', '', $contents );
+	if ( ! mb_check_encoding( $contents, 'UTF-8' ) ) {
+		$contents = mb_convert_encoding( $contents, 'UTF-8', 'SJIS-win' );
+	}
+	$stream = fopen( 'php://temp', 'r+' );
+	fwrite( $stream, $contents );
+	rewind( $stream );
+	$columns = wpplugin_facility_columns();
+	$labels = array_flip( $columns );
+	$header = fgetcsv( $stream, 0, ',', '"', '\\' );
+	$keys = array();
+	if ( is_array( $header ) ) {
+		foreach ( $header as $index => $label ) {
+			$label = trim( (string) $label );
+			if ( isset( $labels[ $label ] ) ) {
+				$keys[ $index ] = $labels[ $label ];
+			}
+		}
+	}
+	if ( ! in_array( 'id', $keys, true ) || ! in_array( 'name', $keys, true ) ) {
+		fclose( $stream );
+		$redirect( 'invalid' );
+	}
+	$imported = array();
+	while ( false !== ( $row = fgetcsv( $stream, 0, ',', '"', '\\' ) ) ) {
+		$facility = array();
+		foreach ( $keys as $index => $key ) {
+			$value = (string) ( $row[ $index ] ?? '' );
+			$facility[ $key ] = preg_replace( "/^'(?=[\\t\\r =+@\\-])/", '', $value );
+		}
+		$imported[] = $facility;
+	}
+	fclose( $stream );
+	$imported = wpplugin_sanitize_facilities( wp_slash( $imported ) );
+	if ( empty( $imported ) ) {
+		$redirect( 'invalid' );
+	}
+	$current = get_option( WPPLUGIN_FACILITIES_OPTION, array() );
+	if ( empty( $current ) ) {
+		$current = wpplugin_get_facilities();
+	}
+	$imported_by_id = array();
+	foreach ( $imported as $facility ) {
+		$imported_by_id[ $facility['id'] ] = $facility;
+	}
+	$merged = array();
+	foreach ( $current as $facility ) {
+		if ( isset( $imported_by_id[ $facility['id'] ] ) ) {
+			$merged[] = $imported_by_id[ $facility['id'] ];
+			unset( $imported_by_id[ $facility['id'] ] );
+		} else {
+			$merged[] = $facility;
+		}
+	}
+	$merged = array_merge( $merged, array_values( $imported_by_id ) );
+	update_option( WPPLUGIN_FACILITIES_OPTION, $merged );
+	$redirect( 'ok', count( $imported ) );
+}
+add_action( 'admin_post_wpplugin_import_facilities_csv', 'wpplugin_import_facilities_csv' );
+
+function wpplugin_render_facilities_field() {
+	$facilities = get_option( WPPLUGIN_FACILITIES_OPTION, array() );
+	if ( empty( $facilities ) ) {
+		$facilities = wpplugin_get_facilities();
+	}
+	$columns = wpplugin_facility_columns();
 	?>
 	<div class="wpplugin-facility-manager" data-facilities="<?php echo esc_attr( wp_json_encode( $facilities ) ); ?>">
 		<input type="hidden" class="wpplugin-facility-manager__data" name="<?php echo esc_attr( WPPLUGIN_FACILITIES_OPTION ); ?>" value="<?php echo esc_attr( wp_json_encode( $facilities ) ); ?>" />
@@ -975,12 +1170,35 @@ function wpplugin_render_settings_page() {
 	<div class="wrap wpplugin-facility-admin-page">
 		<h1>施設管理</h1>
 		<?php settings_errors(); ?>
+		<?php
+		$import_result = isset( $_GET['wpplugin_facility_import'] ) ? sanitize_key( wp_unslash( $_GET['wpplugin_facility_import'] ) ) : '';
+		if ( 'ok' === $import_result ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( absint( $_GET['count'] ?? 0 ) ) . '件の施設定義をCSVから取り込みました。</p></div>';
+		} elseif ( 'nofile' === $import_result ) {
+			echo '<div class="notice notice-error"><p>CSVファイルを選択してください。</p></div>';
+		} elseif ( 'invalid' === $import_result ) {
+			echo '<div class="notice notice-error"><p>CSVの形式が正しくありません。「施設ID」「施設名」を含むヘッダー行が必要です。</p></div>';
+		}
+		?>
 		<form action="options.php" method="post">
 			<?php
 			settings_fields( 'wpplugin_settings' );
 			do_settings_sections( WPPLUGIN_FACILITY_PAGE_SLUG );
 			submit_button();
 			?>
+		</form>
+		<h2>施設定義のCSV</h2>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+			<input type="hidden" name="action" value="wpplugin_export_facilities_csv" />
+			<?php wp_nonce_field( 'wpplugin_export_facilities_csv', 'wpplugin_facility_csv_nonce' ); ?>
+			<button type="submit" class="button">施設定義をCSVでダウンロード</button>
+		</form>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data" style="margin-top:12px;">
+			<input type="hidden" name="action" value="wpplugin_import_facilities_csv" />
+			<?php wp_nonce_field( 'wpplugin_import_facilities_csv', 'wpplugin_facility_csv_nonce' ); ?>
+			<input type="file" name="facility_csv" accept=".csv,text/csv" required />
+			<button type="submit" class="button">CSVから取り込み</button>
+			<p class="description">エクスポートしたCSVと同じヘッダー行が必要です。施設IDが一致する施設は上書きし、存在しない施設IDは追加します（CSVにない既存施設は残ります）。</p>
 		</form>
 	</div>
 	<?php
@@ -1013,6 +1231,12 @@ function wpplugin_render_activity_log() {
 	?>
 	<h2>操作ログ</h2>
 	<p class="description">予約・変更・承認・却下・キャンセルの履歴を新しい順に表示します（最大<?php echo esc_html( (string) WPPLUGIN_LOG_LIMIT ); ?>件）。</p>
+	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpplugin-log-csv-export">
+		<input type="hidden" name="action" value="wpplugin_export_activity_log_csv" />
+		<?php wp_nonce_field( 'wpplugin_export_activity_log_csv', 'wpplugin_log_csv_nonce' ); ?>
+		<button type="submit" class="button">操作ログをCSVでダウンロード</button>
+	</form>
+	<div class="wpplugin-activity-log" style="max-height:400px;overflow:auto;margin-top:10px;">
 	<table class="widefat striped">
 		<thead><tr><th>日時</th><th>操作</th><th>実行者</th><th>予約内容</th></tr></thead>
 		<tbody>
@@ -1029,8 +1253,32 @@ function wpplugin_render_activity_log() {
 			<?php endforeach; ?>
 		</tbody>
 	</table>
+	</div>
 	<?php
 }
+
+function wpplugin_export_activity_log_csv() {
+	if ( ! wpplugin_user_can_manage_reservations() || ! check_admin_referer( 'wpplugin_export_activity_log_csv', 'wpplugin_log_csv_nonce' ) ) {
+		wp_die( '操作ログを出力する権限がありません。' );
+	}
+	$logs = get_option( WPPLUGIN_LOG_OPTION, array() );
+	$logs = is_array( $logs ) ? array_reverse( $logs ) : array();
+	$labels = wpplugin_log_actions();
+	nocache_headers();
+	header( 'Content-Type: text/csv; charset=UTF-8' );
+	header( 'Content-Disposition: attachment; filename="activity-log-' . gmdate( 'Ymd-His' ) . '.csv"' );
+	echo "\xEF\xBB\xBF";
+	$output = fopen( 'php://output', 'w' );
+	fputcsv( $output, array( '日時', '操作', '実行者', '予約内容' ), ',', '"', '\\' );
+	foreach ( $logs as $log ) {
+		$action = isset( $log['action'] ) ? $log['action'] : '';
+		$row = array( $log['time'] ?? '', $labels[ $action ] ?? $action, $log['user'] ?? '', $log['summary'] ?? '' );
+		fputcsv( $output, array_map( 'wpplugin_csv_safe_value', $row ), ',', '"', '\\' );
+	}
+	fclose( $output );
+	exit;
+}
+add_action( 'admin_post_wpplugin_export_activity_log_csv', 'wpplugin_export_activity_log_csv' );
 
 function wpplugin_render_admin_calendar_page() {
 	if ( ! is_user_logged_in() ) {
@@ -1115,6 +1363,7 @@ function wpplugin_get_reservation_management_rows( $month ) {
 		}
 		$rows[] = array(
 			'reservation' => $reservation,
+			'email' => wpplugin_get_reservation_email( $reservation['id'] ),
 			'facility_name' => $facility['name'] ?? '削除済み施設',
 			'time_label' => $time_label,
 			'additional_label' => implode( '、', $additional_labels ),
@@ -1195,7 +1444,7 @@ function wpplugin_render_reservation_management_page() {
 		</form>
 		<div class="wpplugin-facility-manager__table-wrap">
 			<table class="widefat striped">
-				<thead><tr><th class="check-column"><input type="checkbox" aria-label="すべて選択" onclick="document.querySelectorAll('.wpplugin-reservation-select').forEach(function(c){c.checked=this.checked;}.bind(this));" /></th><th>ステータス</th><th>利用日</th><th>時刻</th><th>施設</th><th>予約タイプ</th><th>予約タイトル</th><th>予約者</th><th>追加条件</th><th>詳細</th></tr></thead>
+				<thead><tr><th class="check-column"><input type="checkbox" aria-label="すべて選択" onclick="document.querySelectorAll('.wpplugin-reservation-select').forEach(function(c){c.checked=this.checked;}.bind(this));" /></th><th>ステータス</th><th>利用日</th><th>時刻</th><th>施設</th><th>予約タイプ</th><th>予約タイトル</th><th>予約者氏名</th><th>予約者メールアドレス</th><th>予約者部屋番号</th><th>追加条件</th><th>詳細</th></tr></thead>
 				<tbody>
 					<?php foreach ( $rows as $row ) : $reservation = $row['reservation']; ?>
 						<tr>
@@ -1207,11 +1456,13 @@ function wpplugin_render_reservation_management_page() {
 							<td><?php echo esc_html( $reservation['reservation_type'] ); ?></td>
 							<td><?php echo esc_html( $reservation['title'] ); ?></td>
 							<td><?php echo esc_html( $reservation['name'] ); ?></td>
+							<td><?php echo esc_html( $row['email'] ); ?></td>
+							<td><?php echo esc_html( $reservation['room_number'] ); ?></td>
 							<td><?php echo esc_html( $row['additional_label'] ); ?></td>
 							<td><?php echo esc_html( $reservation['details'] ); ?></td>
 						</tr>
 					<?php endforeach; ?>
-					<?php if ( empty( $rows ) ) : ?><tr><td colspan="10">予約はありません。</td></tr><?php endif; ?>
+					<?php if ( empty( $rows ) ) : ?><tr><td colspan="12">予約はありません。</td></tr><?php endif; ?>
 				</tbody>
 			</table>
 		</div>
@@ -1235,7 +1486,7 @@ function wpplugin_export_reservations_csv() {
 	header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
 	echo "\xEF\xBB\xBF";
 	$output = fopen( 'php://output', 'w' );
-	$header = array( '予約ID', 'ステータス', '管理組合が費用を負担', '利用日', '開始時刻', '終了時刻', '施設', '予約タイプ', '予約タイトル', '予約者', '予約者メール', '詳細', '利用時間(時間)', '泊数', '基本料金単価', '基本料金小計' );
+	$header = array( '予約ID', 'ステータス', '管理組合が費用を負担', '利用日', '開始時刻', '終了時刻', '施設', '予約タイプ', '予約タイトル', '予約者氏名', '予約者メールアドレス', '予約者部屋番号', '詳細', '利用時間(時間)', '泊数', '基本料金単価', '基本料金小計' );
 	for ( $index = 1; $index <= 3; $index++ ) {
 		array_push( $header, '追加条件' . $index, '追加料金単価' . $index, '追加数量' . $index, '追加料金小計' . $index );
 	}
@@ -1248,7 +1499,6 @@ function wpplugin_export_reservations_csv() {
 		$hours = $is_stay ? 0 : wpplugin_get_reservation_hours( $reservation );
 		$unit_price = wpplugin_parse_fee( $is_stay ? ( $facility['stay_fee'] ?? '' ) : ( $facility['fee'] ?? '' ) );
 		$base_total = $unit_price * ( $is_stay ? $row['nights'] : $hours );
-		$author = get_userdata( (int) get_post_field( 'post_author', $reservation['id'] ) );
 		$end_label = $is_stay ? ( $facility['stay_end'] ?? '' ) . '（翌日以降）' : $reservation['end'];
 		$total = $base_total;
 		$additional_columns = array();
@@ -1260,7 +1510,7 @@ function wpplugin_export_reservations_csv() {
 			array_push( $additional_columns, $facility[ 'additional_condition_' . $index ] ?? '', $additional_price, $quantity, $subtotal );
 		}
 		$csv_row = array_merge(
-			array( $reservation['id'], wpplugin_reservation_status_label( $reservation['status'] ), $reservation['cost_by_association'] ? '1' : '0', $reservation['date'], $reservation['start'], $end_label, $row['facility_name'], $reservation['reservation_type'], $reservation['title'], $reservation['name'], $author ? $author->user_email : '', $reservation['details'], $hours, $is_stay ? $row['nights'] : 0, $unit_price, $base_total ),
+			array( $reservation['id'], wpplugin_reservation_status_label( $reservation['status'] ), $reservation['cost_by_association'] ? '1' : '0', $reservation['date'], $reservation['start'], $end_label, $row['facility_name'], $reservation['reservation_type'], $reservation['title'], $reservation['name'], $row['email'], $reservation['room_number'], $reservation['details'], $hours, $is_stay ? $row['nights'] : 0, $unit_price, $base_total ),
 			$additional_columns,
 			array( $total )
 		);
@@ -1362,13 +1612,13 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.css', __FILE__ ),
 		array(),
-		'1.0.37'
+		'1.0.40'
 	);
 	wp_register_script(
 		'wpplugin-calendar',
 		plugins_url( 'calendar.js', __FILE__ ),
 		array(),
-		'1.0.38',
+		'1.0.43',
 		true
 	);
 }
@@ -1430,6 +1680,7 @@ function wpplugin_calendar_shortcode() {
 	$year       = (int) wp_date( 'Y', $today );
 	$today_date = wp_date( 'Y-m-d', $today );
 	$current_user = wp_get_current_user();
+	$default_reservation_name = wpplugin_get_reservation_default_name( $current_user );
 	$reservations = wpplugin_get_reservations();
 	$facilities = wpplugin_get_facilities();
 	$selected_facility = reset( $facilities );
@@ -1444,7 +1695,7 @@ function wpplugin_calendar_shortcode() {
 	if ( '' !== $stay_fee && '料金未設定' !== $stay_fee && false === strpos( $stay_fee, '円' ) ) {
 		$stay_fee .= ' 円';
 	}
-	$output     = '<div class="wpplugin-calendar" data-today="' . esc_attr( $today_date ) . '" data-default-name="' . esc_attr( $current_user->user_login ) . '" data-facilities="' . esc_attr( wp_json_encode( $facilities ) ) . '" data-reservations="' . esc_attr( wp_json_encode( $reservations ) ) . '">';
+	$output     = '<div class="wpplugin-calendar" data-today="' . esc_attr( $today_date ) . '" data-default-name="' . esc_attr( $default_reservation_name ) . '" data-default-email="' . esc_attr( $current_user->user_email ) . '" data-facilities="' . esc_attr( wp_json_encode( $facilities ) ) . '" data-reservations="' . esc_attr( wp_json_encode( $reservations ) ) . '">';
 	$status = isset( $_GET['wpplugin_reservation_status'] ) ? sanitize_key( wp_unslash( $_GET['wpplugin_reservation_status'] ) ) : '';
 	if ( 'saved' === $status ) {
 		$output .= '<p class="wpplugin-reservation__notice" role="status">予約が完了しました。</p>';
@@ -1498,7 +1749,9 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<p class="wpplugin-reservation__error" role="alert" hidden></p>';
 	$output .= '<input type="hidden" name="reservation_date" class="wpplugin-reservation__date" required>';
 	$output .= '<label>予約タイトル<input type="text" name="reservation_title" maxlength="200" required></label>';
-	$output .= '<label>予約者名<input type="text" name="reservation_name" value="' . esc_attr( $current_user->user_login ) . '" maxlength="60" required></label>';
+	$output .= '<label>予約者氏名<input type="text" name="reservation_name" value="' . esc_attr( $default_reservation_name ) . '" maxlength="60" required></label>';
+	$output .= '<label>メールアドレス<input type="email" name="reservation_email" value="' . esc_attr( $current_user->user_email ) . '" readonly required></label>';
+	$output .= '<label>予約者部屋番号<input type="text" name="reservation_room_number" inputmode="text" pattern="[A-Za-z0-9]+" required></label>';
 	$output .= '<label class="wpplugin-reservation__type-row" hidden>予約タイプ<select name="reservation_type" class="wpplugin-reservation__type"><option value="時間貸">時間貸</option><option value="宿泊">宿泊</option></select></label>';
 	$output .= '<div class="wpplugin-reservation__time-row wpplugin-reservation__hourly-times">';
 	$output .= '<label>開始時刻' . wpplugin_render_time_options( 'reservation_start', $facility_start, $facility_end ) . '</label>';
@@ -1509,7 +1762,7 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<label>詳細<textarea name="reservation_details" rows="5"></textarea></label>';
 	$output .= '<label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 管理組合が費用を負担</label>';
 	$output .= '<button type="submit">予約を保存</button>';
-	$output .= '<button type="submit" class="wpplugin-reservation__cancel" formaction="' . esc_url( admin_url( 'admin-post.php' ) ) . '" name="action" value="wpplugin_cancel_reservation" formmethod="post" onclick="return confirm(\'この予約をキャンセルしますか？\');" hidden>予約をキャンセル</button>';
+	$output .= '<button type="submit" class="wpplugin-reservation__cancel" formaction="' . esc_url( admin_url( 'admin-post.php' ) ) . '" name="action" value="wpplugin_cancel_reservation" formmethod="post" formnovalidate onclick="return confirm(\'この予約をキャンセルしますか？\');" hidden>予約をキャンセル</button>';
 	$output .= wp_nonce_field( 'wpplugin_cancel_reservation', 'wpplugin_cancel_nonce', true, false );
 	$output .= '</form></section>';
 

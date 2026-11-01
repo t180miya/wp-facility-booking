@@ -184,6 +184,10 @@
 	cursor: pointer;
 }
 
+.wpplugin-calendar .is-others.is-others {
+	color: #6b7280;
+}
+
 .wpplugin-calendar__reservation-link:hover,
 .wpplugin-calendar__reservation-link:focus-visible {
 	color: #bd4934;
@@ -570,8 +574,43 @@
 		background: #eff7ff;
 	}
 
+	.wpplugin-calendar__list-details .wpplugin-calendar__reservation-link,
+	.wpplugin-calendar__selected-date-item .wpplugin-calendar__reservation-link {
+		display: block;
+		max-width: 100%;
+		height: auto;
+		padding: 0;
+		border: 0;
+		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+		color: #e05d44;
+		font-weight: 700;
+		line-height: 1.35;
+		text-align: left;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.wpplugin-calendar__list-details .wpplugin-calendar__reservation-link:hover,
+	.wpplugin-calendar__list-details .wpplugin-calendar__reservation-link:focus-visible,
+	.wpplugin-calendar__selected-date-item .wpplugin-calendar__reservation-link:hover,
+	.wpplugin-calendar__selected-date-item .wpplugin-calendar__reservation-link:focus-visible {
+		background: transparent;
+		color: #bd4934;
+		text-decoration: underline;
+	}
+
 	.wpplugin-calendar__list-item strong {
 		color: #526779;
+	}
+
+	.wpplugin-calendar__list-item .wpplugin-calendar__day:hover,
+	.wpplugin-calendar__list-item .wpplugin-calendar__day:focus-visible {
+		border-radius: 6px;
+		background: #f4b7a9;
+		outline: none;
 	}
 
 		.wpplugin-calendar__no-reservations {

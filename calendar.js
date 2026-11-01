@@ -19,6 +19,7 @@
 		const facilities = JSON.parse( calendar.dataset.facilities || '[]' );
 		let selectedFacility = facilities[ 0 ] || { id: 'default', start: '09:00', end: '18:00' };
 		const defaultName = calendar.dataset.defaultName || '';
+		const defaultEmail = calendar.dataset.defaultEmail || '';
 		let reservations = JSON.parse( calendar.dataset.reservations || '[]' );
 		const sanitizePreviewText = ( value ) => String( value || '' ).replace( /<[^>]*>/g, '' ).trim();
 		const previewStorageKey = 'wpplugin-preview-reservations';
@@ -31,12 +32,26 @@
 			} catch ( error ) {
 				localStorage.removeItem( previewStorageKey );
 			}
-			reservations = reservations.map( ( reservation ) => ( {
-				...reservation,
-				title: sanitizePreviewText( reservation.title ),
-				name: sanitizePreviewText( reservation.name ),
-				details: sanitizePreviewText( reservation.details ),
-			} ) );
+			reservations = reservations.map( ( reservation ) => {
+				const isOwner = ! reservation.email || reservation.email.toLowerCase() === defaultEmail.toLowerCase();
+				return isOwner ? {
+					...reservation,
+					title: sanitizePreviewText( reservation.title ),
+					name: sanitizePreviewText( reservation.name ),
+					details: sanitizePreviewText( reservation.details ),
+				} : {
+					id: reservation.id,
+					facility_id: reservation.facility_id,
+					date: reservation.date,
+					start: reservation.start,
+					end: reservation.end,
+					title: '予約済み',
+					reservation_type: reservation.reservation_type,
+					group_id: reservation.group_id,
+					status: reservation.status,
+					can_edit: false,
+				};
+			} );
 		}
 		const persistPreviewReservations = () => {
 			if ( calendar.dataset.preview === 'true' ) {
@@ -59,6 +74,37 @@
 		} );
 		const reservationForm = calendar.parentElement.querySelector( '.wpplugin-reservation__form' );
 		const notice = calendar.querySelector( '.wpplugin-reservation__notice' );
+		if ( notice && window.history && window.history.replaceState ) {
+			const url = new URL( window.location.href );
+			if ( url.searchParams.has( 'wpplugin_reservation_status' ) ) {
+				url.searchParams.delete( 'wpplugin_reservation_status' );
+				window.history.replaceState( null, '', url.toString() );
+			}
+		}
+		if ( notice ) {
+			const hideNotice = () => {
+				notice.hidden = true;
+			};
+			calendar.addEventListener( 'change', hideNotice );
+			calendar.addEventListener( 'click', hideNotice );
+		}
+		const reservationError = reservationForm.querySelector( '.wpplugin-reservation__error' );
+		const roomNumberInput = reservationForm.querySelector( '[name="reservation_room_number"]' );
+		roomNumberInput.addEventListener( 'input', () => {
+			roomNumberInput.value = roomNumberInput.value
+				.replace( /[０-９Ａ-Ｚａ-ｚ]/g, ( character ) => String.fromCharCode( character.charCodeAt( 0 ) - 0xFEE0 ) )
+				.replace( /[^A-Za-z0-9]/g, '' );
+			if ( ! reservationForm.querySelector( ':invalid' ) ) {
+				reservationError.hidden = true;
+				reservationError.textContent = '';
+			}
+		} );
+		reservationForm.addEventListener( 'invalid', ( event ) => {
+			reservationError.hidden = false;
+			reservationError.textContent = event.target === roomNumberInput && event.target.validity.patternMismatch
+				? '予約者部屋番号は半角英数字で入力してください。'
+				: '必須項目を入力してください。';
+		}, true );
 
 		const reservationsFor = ( date ) => reservations
 			.filter( ( reservation ) => reservation.date === date && String( reservation.facility_id || 'default' ) === String( selectedFacility.id ) )
@@ -180,7 +226,7 @@
 		const statusPrefix = ( reservation ) => reservation.status === 'tentative' ? '【仮予約】' : '';
 		const reservationMarkup = ( date ) => reservationsFor( date ).slice( 0, 3 ).map( ( reservation ) => {
 			const text = `${ statusPrefix( reservation ) }${ escapeHtml( reservation.start ) }-${ escapeHtml( reservation.end ) } ${ escapeHtml( truncateTitle( reservation.title ) ) }`;
-			return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span class="wpplugin-calendar__reservation">${ text }</span>`;
+			return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span class="wpplugin-calendar__reservation is-others">${ text }</span>`;
 		} ).join( '' );
 		const renderDateOptions = () => {
 			const year = Number( yearSelect.value );
@@ -199,7 +245,7 @@
 			const entries = reservationsFor( date );
 			const details = entries.length ? entries.map( ( reservation ) => {
 				const text = `${ statusPrefix( reservation ) }${ escapeHtml( reservation.start ) }-${ escapeHtml( reservation.end ) } ${ escapeHtml( reservation.title ) }`;
-				return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span>${ text }</span>`;
+				return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span class="is-others">${ text }</span>`;
 			} ).join( '' ) : '<span class="wpplugin-calendar__no-reservations">予約なし</span>';
 			selectedDateList.innerHTML = `<div class="wpplugin-calendar__selected-date-item${ isFullyBooked( date ) ? ' is-full-day' : '' }" data-date="${ date }"><span class="wpplugin-calendar__new-reservation-action"><button type="button" class="wpplugin-calendar__new-reservation" data-date="${ date }">新規予約</button> または更新</span><span class="wpplugin-calendar__list-details">${ details }</span></div>`;
 			selectedDateList.hidden = false;
@@ -249,7 +295,7 @@
 				const entries = reservationsFor( date );
 				const details = entries.length ? entries.map( ( reservation ) => {
 					const text = `${ statusPrefix( reservation ) }${ escapeHtml( reservation.start ) }-${ escapeHtml( reservation.end ) } ${ escapeHtml( reservation.title ) }`;
-					return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span>${ text }</span>`;
+					return reservation.can_edit ? `<button type="button" class="wpplugin-calendar__reservation-link" data-reservation-id="${ reservation.id }">${ text }</button>` : `<span class="is-others">${ text }</span>`;
 				} ).join( '<br>' ) : '<span class="wpplugin-calendar__no-reservations">予約なし</span>';
 				const weekendClass = weekdayIndexFor( date ) === 0 ? ' is-sunday' : ( weekdayIndexFor( date ) === 6 ? ' is-saturday' : '' );
 				const fullDayClass = isFullyBooked( date ) ? ' is-full-day' : '';
@@ -332,6 +378,8 @@
 					additional_quantities: [ 1, 2, 3 ].map( ( index ) => reservationForm.querySelector( `[name="additional_quantity_${ index }"]` )?.value || '0' ),
 					title: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_title"]' ).value ),
 					name: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_name"]' ).value ),
+					email: defaultEmail,
+					room_number: roomNumberInput.value,
 					details: sanitizePreviewText( reservationForm.querySelector( '[name="reservation_details"]' ).value ),
 					cost_by_association: Boolean( reservationForm.querySelector( '[name="cost_by_association"]' )?.checked ),
 					status: reservationForm.querySelector( '[name="cost_by_association"]' )?.checked ? 'tentative' : 'confirmed',
@@ -394,7 +442,7 @@
 			const reservation = calendar.parentElement.querySelector( '.wpplugin-reservation' );
 			if ( reservationLink && reservation ) {
 				const selected = reservations.find( ( item ) => String( item.id ) === reservationLink.dataset.reservationId );
-				if ( selected ) {
+				if ( selected && selected.can_edit ) {
 					reservation.hidden = false;
 					reservation.querySelector( '.wpplugin-reservation__id' ).value = selected.group_primary_id || selected.id;
 					reservation.querySelector( '.wpplugin-reservation__facility-id' ).value = selected.facility_id || selectedFacility.id;
@@ -415,6 +463,8 @@
 					reservation.querySelector( '[name="reservation_end"]' ).value = selected.end;
 					reservation.querySelector( '[name="reservation_title"]' ).value = selected.reservation_type === '宿泊' ? '宿泊' : selected.title;
 					reservation.querySelector( '[name="reservation_name"]' ).value = selected.name;
+					reservation.querySelector( '[name="reservation_email"]' ).value = selected.email || defaultEmail;
+					roomNumberInput.value = selected.room_number || '';
 					reservation.querySelector( '[name="reservation_details"]' ).value = selected.details;
 					const selectedCostCheckbox = reservation.querySelector( '[name="cost_by_association"]' );
 					if ( selectedCostCheckbox ) {
@@ -464,6 +514,8 @@
 			reservation.querySelector( '[name="reservation_end"]' ).value = '';
 			reservation.querySelector( '[name="reservation_title"]' ).value = reservation.querySelector( '.wpplugin-reservation__type' ).value === '宿泊' ? '宿泊' : '';
 			reservation.querySelector( '[name="reservation_name"]' ).value = defaultName;
+			reservation.querySelector( '[name="reservation_email"]' ).value = defaultEmail;
+			roomNumberInput.value = '';
 			reservation.querySelector( '[name="reservation_details"]' ).value = reservation.querySelector( '.wpplugin-reservation__type' ).value === '宿泊' ? '利用人数：' : '';
 			reservation.querySelector( 'button[type="submit"]' ).textContent = '予約を保存';
 			const costCheckbox = reservation.querySelector( '[name="cost_by_association"]' );
