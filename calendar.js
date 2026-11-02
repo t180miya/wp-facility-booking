@@ -61,7 +61,7 @@
 		calendarToggle.addEventListener( 'click', () => {
 			const expanded = calendarToggle.getAttribute( 'aria-expanded' ) === 'true';
 			calendarToggle.setAttribute( 'aria-expanded', String( ! expanded ) );
-			calendarToggle.textContent = expanded ? 'すべての日を表示' : 'すべての日を隠す';
+			calendarToggle.textContent = expanded ? 'カレンダーを表示' : 'カレンダーを隠す';
 			calendarPanel.hidden = expanded;
 			datePicker.hidden = ! expanded;
 			const reservation = calendar.parentElement.querySelector( '.wpplugin-reservation' );

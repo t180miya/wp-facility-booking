@@ -394,9 +394,14 @@
 	grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-@media (max-width: 520px) {
+@media (max-width: 767px) {
+	.wpplugin-calendar__header {
+		margin-bottom: 0;
+	}
+
 	.wpplugin-calendar__date-picker {
 		display: block;
+		margin-top: -0.5rem;
 		margin-bottom: 0;
 	}
 
@@ -481,7 +486,7 @@
 	.wpplugin-calendar__toggle {
 		display: block;
 		width: 100%;
-		margin-top: 0.75rem;
+		margin-top: 0;
 	}
 
 	.wpplugin-calendar__panel[hidden] {
@@ -507,6 +512,18 @@
 		grid-column: 1 / -1;
 	}
 
+	.wpplugin-calendar__selectors label:nth-child(2) {
+		grid-column: 1 / -1;
+	}
+
+	.wpplugin-calendar__selectors label:nth-child(3) {
+		grid-column: 1;
+	}
+
+	.wpplugin-calendar__selectors .wpplugin-calendar__toggle {
+		grid-column: 2;
+	}
+
 	.wpplugin-calendar__selectors select {
 		box-sizing: border-box;
 		width: 100%;
@@ -524,6 +541,7 @@
 
 	.wpplugin-calendar__list {
 		display: grid;
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.5rem;
 	}
 

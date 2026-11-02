@@ -343,7 +343,7 @@ function wpplugin_log_reservation_summary( $data ) {
 		'メールアドレス：' . $data['email'],
 		'予約者部屋番号：' . $data['room_number'],
 		'追加条件：' . $data['additional'],
-		'管理組合が費用を負担：' . ( $data['cost_by_association'] ? 'はい' : 'いいえ' ),
+		'予約者費用負担の対象外：' . ( $data['cost_by_association'] ? 'はい' : 'いいえ' ),
 		'詳細：' . $data['details'],
 	);
 
@@ -401,7 +401,7 @@ function wpplugin_notify_applicant( $data, $kind ) {
 	$messages = array(
 		'confirmed' => array( '予約が確定しました', '以下の予約が確定しました。' ),
 		'cancelled' => array( '予約がキャンセルされました', '以下の予約がキャンセルされました。' ),
-		'rejected'  => array( '仮予約について「管理組合が費用を負担」の確認をお願いします', '以下の仮予約は、「管理組合が費用を負担」とは認められませんでした。予約内容の画面で「管理組合が費用を負担」のチェックを外して、予約を保存し直してください。' ),
+		'rejected'  => array( '仮予約について「予約者費用負担の対象外」の確認をお願いします', '以下の仮予約は、「予約者費用負担の対象外」とは認められませんでした。予約内容の画面で「予約者費用負担の対象外」のチェックを外して、予約を保存し直してください。' ),
 	);
 	if ( isset( $messages[ $kind ] ) ) {
 		wpplugin_send_reservation_mail( $data['email'], $messages[ $kind ][0], $messages[ $kind ][1], $data );
@@ -418,7 +418,7 @@ function wpplugin_notify_management_company( $data, $confirmed = false ) {
 		$lead = '以下の予約が登録されました。承認の操作は不要ですが、予約内容をご確認ください。';
 	} else {
 		$subject = '仮予約の承認をお願いします';
-		$lead = '以下の予約が「管理組合が費用を負担」の仮予約として申請されました。予約管理画面で内容を確認し、承認または却下してください。';
+		$lead = '以下の予約が「予約者費用負担の対象外」の仮予約として申請されました。予約管理画面で内容を確認し、承認または却下してください。';
 	}
 	$footer = admin_url( 'admin.php?page=' . WPPLUGIN_RESERVATION_LIST_PAGE_SLUG );
 	foreach ( $recipients as $recipient ) {
@@ -754,7 +754,7 @@ function wpplugin_enqueue_facility_admin_assets( $hook_suffix ) {
 		wp_enqueue_script( 'wpplugin-facility-admin', plugins_url( 'facility-admin.js', __FILE__ ), array(), '1.0.2', true );
 	}
 	if ( WPPLUGIN_CALENDAR_PAGE_SLUG === $page ) {
-		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), array(), '1.0.40' );
+		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), array(), '1.0.48' );
 		wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.43', true );
 	}
 }
@@ -866,7 +866,7 @@ function wpplugin_render_cancel_deadline_field() {
 function wpplugin_render_management_email_field() {
 	?>
 	<input type="text" name="<?php echo esc_attr( WPPLUGIN_MANAGEMENT_EMAIL_OPTION ); ?>" value="<?php echo esc_attr( get_option( WPPLUGIN_MANAGEMENT_EMAIL_OPTION, '' ) ); ?>" class="regular-text" maxlength="2048" autocomplete="off" spellcheck="false" />
-	<p class="description">「管理組合が費用を負担」の仮予約や、「予約時管理会社に通知」が有効な施設の予約があったとき、カンマ区切りで指定した各アドレスに通知します。空欄の場合は通知しません。</p>
+	<p class="description">「予約者費用負担の対象外」の仮予約や、「予約時管理会社に通知」が有効な施設の予約があったとき、カンマ区切りで指定した各アドレスに通知します。空欄の場合は通知しません。</p>
 	<?php
 }
 
@@ -1424,7 +1424,7 @@ function wpplugin_render_reservation_management_page() {
 			<?php wp_nonce_field( 'wpplugin_export_reservations_csv', 'wpplugin_reservation_csv_nonce' ); ?>
 			<button type="submit" class="button button-primary">この月のCSVをダウンロード</button>
 		</form>
-		<form id="wpplugin-reservation-bulk-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpplugin-reservation-bulk-actions" onsubmit="var a=this.elements.bulk_action.value;if(!a){alert('操作を選択してください。');return false;}if(!document.querySelector('.wpplugin-reservation-select:checked')){alert('予約を選択してください。');return false;}if(a==='reject'){return confirm('選択した仮予約を却下し、申請者に「管理組合が費用を負担」のチェックを外すよう通知しますか？');}if(a==='cancel'){return confirm('選択した予約をキャンセルしますか？');}return true;">
+		<form id="wpplugin-reservation-bulk-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="wpplugin-reservation-bulk-actions" onsubmit="var a=this.elements.bulk_action.value;if(!a){alert('操作を選択してください。');return false;}if(!document.querySelector('.wpplugin-reservation-select:checked')){alert('予約を選択してください。');return false;}if(a==='reject'){return confirm('選択した仮予約を却下し、申請者に「予約者費用負担の対象外」のチェックを外すよう通知しますか？');}if(a==='cancel'){return confirm('選択した予約をキャンセルしますか？');}return true;">
 			<input type="hidden" name="action" value="wpplugin_bulk_reservations" />
 			<input type="hidden" name="reservation_month" value="<?php echo esc_attr( $month ); ?>" />
 			<?php wp_nonce_field( 'wpplugin_bulk_reservations', 'wpplugin_bulk_nonce' ); ?>
@@ -1486,7 +1486,7 @@ function wpplugin_export_reservations_csv() {
 	header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
 	echo "\xEF\xBB\xBF";
 	$output = fopen( 'php://output', 'w' );
-	$header = array( '予約ID', 'ステータス', '管理組合が費用を負担', '利用日', '開始時刻', '終了時刻', '施設', '予約タイプ', '予約タイトル', '予約者氏名', '予約者メールアドレス', '予約者部屋番号', '詳細', '利用時間(時間)', '泊数', '基本料金単価', '基本料金小計' );
+	$header = array( '予約ID', 'ステータス', '予約者費用負担の対象外', '利用日', '開始時刻', '終了時刻', '施設', '予約タイプ', '予約タイトル', '予約者氏名', '予約者メールアドレス', '予約者部屋番号', '詳細', '利用時間(時間)', '泊数', '基本料金単価', '基本料金小計' );
 	for ( $index = 1; $index <= 3; $index++ ) {
 		array_push( $header, '追加条件' . $index, '追加料金単価' . $index, '追加数量' . $index, '追加料金小計' . $index );
 	}
@@ -1612,7 +1612,7 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.css', __FILE__ ),
 		array(),
-		'1.0.40'
+		'1.0.48'
 	);
 	wp_register_script(
 		'wpplugin-calendar',
@@ -1715,15 +1715,16 @@ function wpplugin_calendar_shortcode() {
 		$output .= '<option value="' . esc_attr( (string) $year_option ) . '"' . selected( $year_option, $year, false ) . '>' . esc_html( (string) $year_option ) . '年</option>';
 	}
 
-	$output .= '</select>';
+	$output .= '</select></label>';
 	$output .= '<label><span class="screen-reader-text">月を選択</span><select class="wpplugin-calendar__month" aria-label="月を選択">';
 
 	for ( $month_option = 1; $month_option <= 12; $month_option++ ) {
 		$output .= '<option value="' . esc_attr( (string) $month_option ) . '"' . selected( $month_option, $month, false ) . '>' . esc_html( (string) $month_option ) . '月</option>';
 	}
 
-	$output .= '</select></div></div>';
-	$output .= '<button type="button" class="wpplugin-calendar__toggle" aria-expanded="false" aria-controls="wpplugin-calendar-panel">すべての日を表示</button>';
+	$output .= '</select></label>';
+	$output .= '<button type="button" class="wpplugin-calendar__toggle" aria-expanded="false" aria-controls="wpplugin-calendar-panel">カレンダーを表示</button>';
+	$output .= '</div></div>';
 	$output .= '<div class="wpplugin-calendar__date-picker"><label><span class="screen-reader-text">日付を指定</span><select class="wpplugin-calendar__date-select" aria-label="日付を指定"><option value="">日付を指定</option></select></label></div>';
 	$output .= '<div id="wpplugin-calendar-panel" class="wpplugin-calendar__panel" hidden><div class="wpplugin-calendar__grid">';
 	$output .= wpplugin_render_calendar_table( $year, $month, $today_date );
@@ -1760,7 +1761,7 @@ function wpplugin_calendar_shortcode() {
 	$output .= '<p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong> 円／泊）</span></p>';
 	$output .= '<div class="wpplugin-reservation__additional-conditions"></div>';
 	$output .= '<label>詳細<textarea name="reservation_details" rows="5"></textarea></label>';
-	$output .= '<label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 管理組合が費用を負担</label>';
+	$output .= '<label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 予約者費用負担の対象外</label>';
 	$output .= '<button type="submit">予約を保存</button>';
 	$output .= '<button type="submit" class="wpplugin-reservation__cancel" formaction="' . esc_url( admin_url( 'admin-post.php' ) ) . '" name="action" value="wpplugin_cancel_reservation" formmethod="post" formnovalidate onclick="return confirm(\'この予約をキャンセルしますか？\');" hidden>予約をキャンセル</button>';
 	$output .= wp_nonce_field( 'wpplugin_cancel_reservation', 'wpplugin_cancel_nonce', true, false );
