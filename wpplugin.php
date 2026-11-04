@@ -426,6 +426,114 @@ function wpplugin_notify_management_company( $data, $confirmed = false ) {
 	}
 }
 
+/**
+ * 予約処理用の排他ロックを取得する。
+ * MySQLのGET_LOCKを使うため、接続終了時（異常終了含む）に自動解放され残留しない。
+ * 利用できない場合は有効期限付きのoptionロックにフォールバックする。
+ * 同一リクエスト内では再入可能。
+ */
+function wpplugin_acquire_lock( $facility_ids, $timeout = 10 ) {
+	$facility_ids = array_values( array_unique( array_map( 'strval', array_filter( (array) $facility_ids, 'strlen' ) ) ) );
+	// 複数施設を取る場合は常に同じ順序で取得してデッドロックを避ける。
+	sort( $facility_ids );
+	$acquired = array();
+	foreach ( $facility_ids as $facility_id ) {
+		if ( ! wpplugin_acquire_single_lock( $facility_id, $timeout ) ) {
+			wpplugin_release_lock( $acquired );
+			return false;
+		}
+		$acquired[] = $facility_id;
+	}
+	return true;
+}
+
+function wpplugin_acquire_single_lock( $facility_id, $timeout ) {
+	global $wpdb;
+	static $registered = false;
+	if ( ! isset( $GLOBALS['wpplugin_locks'] ) ) {
+		$GLOBALS['wpplugin_locks'] = array();
+	}
+	$locks = &$GLOBALS['wpplugin_locks'];
+	if ( isset( $locks[ $facility_id ] ) ) {
+		$locks[ $facility_id ]['depth']++;
+		return true;
+	}
+	if ( ! $registered ) {
+		// wp_die() / exit / 致命的エラーでも解放する。
+		register_shutdown_function( 'wpplugin_release_all_locks' );
+		$registered = true;
+	}
+
+	$hash = md5( $wpdb->prefix . $facility_id );
+	$lock_name = 'wpplugin_' . $hash;
+	$result = $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK( %s, %d )', $lock_name, (int) $timeout ) );
+	if ( null !== $result && '' !== $result && ! $wpdb->last_error ) {
+		if ( '1' !== (string) $result ) {
+			return false;
+		}
+		$locks[ $facility_id ] = array( 'depth' => 1, 'type' => 'mysql', 'token' => $lock_name );
+		return true;
+	}
+
+	// フォールバック: 期限（60秒）付きのoptionロック。期限切れは奪取可能。
+	$option = 'wpplugin_lock_' . $hash;
+	$token  = wp_generate_uuid4();
+	$deadline = microtime( true ) + $timeout;
+	do {
+		if ( add_option( $option, ( time() + 60 ) . '|' . $token, '', 'no' ) ) {
+			$locks[ $facility_id ] = array( 'depth' => 1, 'type' => 'option', 'token' => $token, 'option' => $option );
+			return true;
+		}
+		$current = $wpdb->get_var( $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s", $option ) );
+		if ( null === $current || (int) $current < time() ) {
+			$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value = %s", $option, (string) $current ) );
+			wp_cache_delete( 'alloptions', 'options' );
+			wp_cache_delete( $option, 'options' );
+			continue;
+		}
+		usleep( 100000 );
+	} while ( microtime( true ) < $deadline );
+
+	return false;
+}
+
+function wpplugin_release_lock( $facility_ids ) {
+	foreach ( array_unique( array_map( 'strval', (array) $facility_ids ) ) as $facility_id ) {
+		if ( empty( $GLOBALS['wpplugin_locks'][ $facility_id ] ) ) {
+			continue;
+		}
+		if ( --$GLOBALS['wpplugin_locks'][ $facility_id ]['depth'] > 0 ) {
+			continue;
+		}
+		wpplugin_release_single_lock( $facility_id );
+	}
+}
+
+function wpplugin_release_single_lock( $facility_id ) {
+	global $wpdb;
+	if ( empty( $GLOBALS['wpplugin_locks'][ $facility_id ] ) ) {
+		return;
+	}
+	$lock = $GLOBALS['wpplugin_locks'][ $facility_id ];
+	unset( $GLOBALS['wpplugin_locks'][ $facility_id ] );
+	if ( 'mysql' === $lock['type'] ) {
+		$wpdb->query( $wpdb->prepare( 'SELECT RELEASE_LOCK( %s )', $lock['token'] ) );
+	} else {
+		$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value LIKE %s", $lock['option'], '%|' . $wpdb->esc_like( $lock['token'] ) ) );
+		wp_cache_delete( 'alloptions', 'options' );
+		wp_cache_delete( $lock['option'], 'options' );
+	}
+}
+
+function wpplugin_release_all_locks() {
+	if ( empty( $GLOBALS['wpplugin_locks'] ) ) {
+		return;
+	}
+	foreach ( array_keys( $GLOBALS['wpplugin_locks'] ) as $facility_id ) {
+		wpplugin_release_single_lock( (string) $facility_id );
+	}
+}
+
 function wpplugin_save_reservation() {
 	if ( ! is_user_logged_in() || ! check_admin_referer( 'wpplugin_save_reservation', 'wpplugin_reservation_nonce' ) ) {
 		wp_die( '予約を保存できませんでした。' );
@@ -494,7 +602,14 @@ function wpplugin_save_reservation() {
 			'end' => $facility['stay_end'],
 		);
 	}
-	$existing_reservations = get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1 ) );
+	$lock_facilities = array( $facility_id );
+	if ( $reservation_id && get_post_type( $reservation_id ) === WPPLUGIN_RESERVATION_POST_TYPE ) {
+		$lock_facilities[] = (string) get_post_meta( $reservation_id, '_wpplugin_reservation_facility_id', true );
+	}
+	if ( ! wpplugin_acquire_lock( $lock_facilities ) ) {
+		wp_die( '他のユーザーが予約処理中です。しばらくしてからもう一度お試しください。' );
+	}
+	$existing_reservations = get_posts( array( 'post_type' => WPPLUGIN_RESERVATION_POST_TYPE, 'post_status' => array( 'private', 'publish' ), 'numberposts' => -1, 'cache_results' => false ) );
 	foreach ( $periods as $period ) {
 		foreach ( $existing_reservations as $existing_reservation ) {
 			if ( ( $group_id && (string) get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_group', true ) === $group_id ) || get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_date', true ) !== $period['date'] || (string) get_post_meta( $existing_reservation->ID, '_wpplugin_reservation_facility_id', true ) !== (string) $facility_id ) {
@@ -590,6 +705,7 @@ function wpplugin_save_reservation() {
 			}
 		}
 	}
+	wpplugin_release_lock( $lock_facilities );
 	$log_notification = wpplugin_get_reservation_notification_data( $post_id );
 	wpplugin_add_log( $previous_status ? 'updated' : 'created', $log_notification );
 	if ( $new_status !== $previous_status ) {
@@ -614,6 +730,19 @@ add_action( 'admin_post_wpplugin_save_reservation', 'wpplugin_save_reservation' 
 add_action( 'admin_post_nopriv_wpplugin_save_reservation', 'wpplugin_save_reservation' );
 
 function wpplugin_cancel_reservation_group( $reservation_id, $user = null ) {
+	$lock_facility = (string) get_post_meta( absint( $reservation_id ), '_wpplugin_reservation_facility_id', true );
+	if ( ! wpplugin_acquire_lock( $lock_facility ) ) {
+		$GLOBALS['wpplugin_cancel_error'] = '他のユーザーが予約処理中です。しばらくしてからもう一度お試しください。';
+		return false;
+	}
+	try {
+		return wpplugin_cancel_reservation_group_locked( $reservation_id, $user );
+	} finally {
+		wpplugin_release_lock( $lock_facility );
+	}
+}
+
+function wpplugin_cancel_reservation_group_locked( $reservation_id, $user = null ) {
 	$reservation_id = absint( $reservation_id );
 	if ( ! $reservation_id || WPPLUGIN_RESERVATION_POST_TYPE !== get_post_type( $reservation_id ) || ! wpplugin_user_can_edit_reservation( $reservation_id, $user ) ) {
 		return false;
@@ -1570,9 +1699,26 @@ function wpplugin_bulk_reservations() {
 			}
 			continue;
 		}
+		if ( 'approve' === $bulk_action ) {
+			$lock_facility = (string) get_post_meta( $reservation_id, '_wpplugin_reservation_facility_id', true );
+			if ( ! wpplugin_acquire_lock( $lock_facility ) ) {
+				continue;
+			}
+			try {
+				clean_post_cache( $reservation_id );
+				$still_tentative = WPPLUGIN_RESERVATION_POST_TYPE === get_post_type( $reservation_id ) && WPPLUGIN_STATUS_TENTATIVE === wpplugin_get_reservation_status( $reservation_id );
+				if ( $still_tentative ) {
+					wpplugin_set_reservation_group_status( $reservation_id, WPPLUGIN_STATUS_CONFIRMED );
+				}
+			} finally {
+				wpplugin_release_lock( $lock_facility );
+			}
+			if ( ! $still_tentative ) {
+				continue;
+			}
+		}
 		$notification = wpplugin_get_reservation_notification_data( $reservation_id );
 		if ( 'approve' === $bulk_action ) {
-			wpplugin_set_reservation_group_status( $reservation_id, WPPLUGIN_STATUS_CONFIRMED );
 			wpplugin_add_log( 'approved', $notification );
 			wpplugin_notify_applicant( $notification, 'confirmed' );
 		} else {
