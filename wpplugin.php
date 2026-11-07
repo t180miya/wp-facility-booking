@@ -91,6 +91,21 @@ function wpplugin_sanitize_plain_textarea( $value ) {
 	return is_string( $value ) ? sanitize_textarea_field( wp_unslash( $value ) ) : '';
 }
 
+function wpplugin_sanitize_facility_info( $value ) {
+	if ( ! is_string( $value ) ) {
+		return '';
+	}
+	// Preserve percent-encoded URLs, which sanitize_textarea_field removes.
+	$value = wp_check_invalid_utf8( $value );
+	if ( false !== strpos( $value, '<' ) ) {
+		$value = wp_pre_kses_less_than( $value );
+		$value = wp_strip_all_tags( $value, false );
+		$value = str_replace( "<\n", "&lt;\n", $value );
+	}
+
+	return trim( $value );
+}
+
 function wpplugin_reservation_type_for_facility( $facility ) {
 	$type = isset( $facility['reservation_type'] ) ? $facility['reservation_type'] : '時間貸';
 
@@ -112,11 +127,16 @@ function wpplugin_get_facilities() {
 				'start' => get_option( WPPLUGIN_FACILITY_START_OPTION, '09:00' ),
 				'end' => get_option( WPPLUGIN_FACILITY_END_OPTION, '18:00' ),
 				'info' => get_option( WPPLUGIN_FACILITY_INFO_OPTION, '施設情報未設定' ),
+				'cost_exemption_description' => '',
+				'reservation_details_description' => '',
 				'additional_condition_1' => '',
+				'additional_condition_description_1' => '',
 				'additional_fee_1' => '',
 				'additional_condition_2' => '',
+				'additional_condition_description_2' => '',
 				'additional_fee_2' => '',
 				'additional_condition_3' => '',
+				'additional_condition_description_3' => '',
 				'additional_fee_3' => '',
 				'reservation_type' => '時間貸',
 				'stay_start' => '15:00',
@@ -881,13 +901,13 @@ function wpplugin_enqueue_facility_admin_assets( $hook_suffix ) {
 		return;
 	}
 
-	wp_enqueue_style( 'wpplugin-facility-admin', plugins_url( 'facility-admin.css', __FILE__ ), array(), '1.0.12' );
+	wp_enqueue_style( 'wpplugin-facility-admin', plugins_url( 'facility-admin.css', __FILE__ ), array(), '1.0.15' );
 	if ( WPPLUGIN_FACILITY_PAGE_SLUG === $page ) {
-		wp_enqueue_script( 'wpplugin-facility-admin', plugins_url( 'facility-admin.js', __FILE__ ), array(), '1.0.3', true );
+		wp_enqueue_script( 'wpplugin-facility-admin', plugins_url( 'facility-admin.js', __FILE__ ), array(), '1.0.6', true );
 	}
 	if ( WPPLUGIN_CALENDAR_PAGE_SLUG === $page ) {
-		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), 		array(), '1.0.50' );
-				wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.44', true );
+		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), 		array(), '1.0.52' );
+				wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.49', true );
 	}
 }
 add_action( 'admin_enqueue_scripts', 'wpplugin_enqueue_facility_admin_assets' );
@@ -908,7 +928,7 @@ function wpplugin_register_settings() {
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_FEE_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'sanitize_text_field', 'default' => '料金未設定' ) );
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_START_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'wpplugin_sanitize_time', 'default' => '09:00' ) );
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_END_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'wpplugin_sanitize_time', 'default' => '18:00' ) );
-	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_INFO_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'sanitize_textarea_field', 'default' => '施設情報未設定' ) );
+	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITY_INFO_OPTION, array( 'type' => 'string', 'sanitize_callback' => 'wpplugin_sanitize_facility_info', 'default' => '施設情報未設定' ) );
 	register_setting( 'wpplugin_settings', WPPLUGIN_FACILITIES_OPTION, array( 'type' => 'array', 'sanitize_callback' => 'wpplugin_sanitize_facilities', 'default' => array() ) );
 
 	add_settings_section( 'wpplugin_facility_section', '施設定義', '__return_false', WPPLUGIN_FACILITY_PAGE_SLUG );
@@ -1090,13 +1110,18 @@ function wpplugin_sanitize_facilities( $value ) {
 			'fee' => sanitize_text_field( wp_unslash( $facility['fee'] ?? '' ) ),
 			'start' => wpplugin_sanitize_time( wp_unslash( $facility['start'] ?? '09:00' ) ),
 			'end' => wpplugin_sanitize_time( wp_unslash( $facility['end'] ?? '18:00' ) ),
-			'info' => sanitize_textarea_field( wp_unslash( $facility['info'] ?? '' ) ),
+			'info' => wpplugin_sanitize_facility_info( wp_unslash( $facility['info'] ?? '' ) ),
+			'cost_exemption_description' => sanitize_textarea_field( wp_unslash( $facility['cost_exemption_description'] ?? '' ) ),
+			'reservation_details_description' => sanitize_textarea_field( wp_unslash( $facility['reservation_details_description'] ?? '' ) ),
 			'rules_url' => esc_url_raw( trim( wp_unslash( $facility['rules_url'] ?? '' ) ), array( 'http', 'https' ) ),
 			'additional_condition_1' => sanitize_text_field( wp_unslash( $facility['additional_condition_1'] ?? '' ) ),
+			'additional_condition_description_1' => sanitize_textarea_field( wp_unslash( $facility['additional_condition_description_1'] ?? '' ) ),
 			'additional_fee_1' => sanitize_text_field( wp_unslash( $facility['additional_fee_1'] ?? '' ) ),
 			'additional_condition_2' => sanitize_text_field( wp_unslash( $facility['additional_condition_2'] ?? '' ) ),
+			'additional_condition_description_2' => sanitize_textarea_field( wp_unslash( $facility['additional_condition_description_2'] ?? '' ) ),
 			'additional_fee_2' => sanitize_text_field( wp_unslash( $facility['additional_fee_2'] ?? '' ) ),
 			'additional_condition_3' => sanitize_text_field( wp_unslash( $facility['additional_condition_3'] ?? '' ) ),
+			'additional_condition_description_3' => sanitize_textarea_field( wp_unslash( $facility['additional_condition_description_3'] ?? '' ) ),
 			'additional_fee_3' => sanitize_text_field( wp_unslash( $facility['additional_fee_3'] ?? '' ) ),
 			'reservation_type' => in_array( $facility['reservation_type'] ?? '時間貸', array( '時間貸', '宿泊', '両方' ), true ) ? $facility['reservation_type'] : '時間貸',
 			'stay_start' => wpplugin_sanitize_time( wp_unslash( $facility['stay_start'] ?? '15:00' ) ),
@@ -1120,11 +1145,16 @@ function wpplugin_facility_columns() {
 		'stay_end' => '宿泊終了',
 		'stay_fee' => '宿泊料金',
 		'additional_condition_1' => '追加条件名1',
+		'additional_condition_description_1' => '追加条件説明1',
 		'additional_fee_1' => '追加料金1',
 		'additional_condition_2' => '追加条件名2',
+		'additional_condition_description_2' => '追加条件説明2',
 		'additional_fee_2' => '追加料金2',
 		'additional_condition_3' => '追加条件名3',
+		'additional_condition_description_3' => '追加条件説明3',
 		'additional_fee_3' => '追加料金3',
+		'cost_exemption_description' => '費用負担外説明',
+		'reservation_details_description' => '予約条件詳細',
 		'info' => '施設情報・説明',
 		'rules_url' => '使用細則URL',
 		'notify_management' => '予約時管理会社に通知',
@@ -1281,7 +1311,10 @@ function wpplugin_render_facilities_field() {
 					<?php for ( $index = 1; $index <= 3; $index++ ) : ?>
 						<label>追加条件名<?php echo esc_html( (string) $index ); ?><input name="additional_condition_<?php echo esc_attr( (string) $index ); ?>" type="text" /></label>
 						<label>追加条件の料金<?php echo esc_html( (string) $index ); ?><input name="additional_fee_<?php echo esc_attr( (string) $index ); ?>" type="text" /></label>
+						<label class="wpplugin-facility-manager__info">追加条件説明<?php echo esc_html( (string) $index ); ?><textarea name="additional_condition_description_<?php echo esc_attr( (string) $index ); ?>" rows="3"></textarea></label>
 					<?php endfor; ?>
+					<label class="wpplugin-facility-manager__info">費用負担外説明<textarea name="cost_exemption_description" rows="3"></textarea></label>
+					<label class="wpplugin-facility-manager__info">予約条件詳細<textarea name="reservation_details_description" rows="3"></textarea></label>
 					<label class="wpplugin-facility-manager__info">施設情報・説明<textarea name="info" rows="5"></textarea></label>
 					<label>使用細則URL<input name="rules_url" type="url" placeholder="https://example.com/rules" /></label>
 					<label class="wpplugin-facility-manager__check"><input name="notify_management" type="checkbox" value="1" /> 予約時管理会社に通知</label>
@@ -1775,13 +1808,13 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.css', __FILE__ ),
 		array(),
-		'1.0.50'
+		'1.0.52'
 	);
 	wp_register_script(
 		'wpplugin-calendar',
 		plugins_url( 'calendar.js', __FILE__ ),
 		array(),
-		'1.0.44',
+		'1.0.49',
 		true
 	);
 }
@@ -1923,8 +1956,9 @@ function wpplugin_calendar_shortcode() {
 	$output .= '</div>';
 	$output .= '<p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong> 円／泊）</span></p>';
 	$output .= '<div class="wpplugin-reservation__additional-conditions"></div>';
-	$output .= '<label>予約条件詳細<textarea name="reservation_details" rows="5"></textarea></label>';
-	$output .= '<label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 予約者費用負担の対象外</label>';
+	$details_id = wp_unique_id( 'wpplugin-reservation-details-' );
+	$output .= '<div class="wpplugin-reservation__condition"><div class="wpplugin-reservation__condition-heading"><label for="' . esc_attr( $details_id ) . '">予約条件詳細</label><span class="wpplugin-reservation__details-help"></span></div><textarea id="' . esc_attr( $details_id ) . '" name="reservation_details" rows="5"></textarea></div>';
+	$output .= '<div class="wpplugin-reservation__condition-heading"><label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 予約者費用負担の対象外</label><span class="wpplugin-reservation__cost-help"></span></div>';
 	$rules_url = (string) ( $selected_facility['rules_url'] ?? '' );
 	$output .= '<label class="wpplugin-reservation__rules"' . ( '' === $rules_url ? ' hidden' : '' ) . '><input type="checkbox" name="agree_rules" value="1"' . ( '' === $rules_url ? ' disabled' : ' required' ) . '> <a class="wpplugin-reservation__rules-link"' . ( '' !== $rules_url ? ' href="' . esc_url( $rules_url ) . '" target="_blank" rel="noopener noreferrer"' : '' ) . '>使用細則</a>に同意する</label>';
 	$output .= '<button type="submit">予約を保存</button>';

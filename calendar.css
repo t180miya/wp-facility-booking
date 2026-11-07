@@ -323,6 +323,87 @@
 	font-weight: 700;
 }
 
+.wpplugin-reservation__additional-conditions {
+	display: grid;
+	gap: 1rem;
+}
+
+.wpplugin-reservation__condition {
+	display: grid;
+	gap: 0.35rem;
+}
+
+.wpplugin-reservation__condition-heading {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.wpplugin-reservation__condition-heading:has(.wpplugin-reservation__condition-tooltip:not([hidden])) {
+	z-index: 1;
+}
+
+.wpplugin-reservation__condition-help {
+	display: inline-flex;
+	flex: 0 0 1.35rem;
+	align-items: center;
+	justify-content: center;
+	width: 1.35rem;
+	height: 1.35rem;
+	padding: 0;
+	border: 1px solid #526779;
+	border-radius: 50%;
+	background: #fff;
+	color: #526779;
+	font: 700 0.85rem/1 sans-serif;
+	cursor: pointer;
+}
+
+.wpplugin-reservation__condition-help.is-empty {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.wpplugin-reservation__condition-help:focus-visible {
+	outline: 2px solid #bd4934;
+	outline-offset: 2px;
+}
+
+.wpplugin-reservation__condition-tooltip {
+	position: absolute;
+	top: calc(100% + 0.4rem);
+	left: 0;
+	box-sizing: border-box;
+	width: max-content;
+	max-width: min(100%, 24rem);
+	padding: 0.65rem 0.75rem;
+	border: 1px solid #b8c7d1;
+	border-radius: 6px;
+	background: #fff;
+	color: #19324a;
+	box-shadow: 0 4px 12px rgba(20, 40, 60, 0.18);
+	white-space: pre-line;
+	overflow-wrap: anywhere;
+}
+
+.wpplugin-reservation__condition-tooltip[hidden] {
+	display: none;
+}
+
+.wpplugin-reservation__condition-tooltip::before {
+	position: absolute;
+	top: -0.35rem;
+	left: 1rem;
+	width: 0.6rem;
+	height: 0.6rem;
+	border-top: 1px solid #b8c7d1;
+	border-left: 1px solid #b8c7d1;
+	background: #fff;
+	content: "";
+	transform: rotate(45deg);
+}
+
 .wpplugin-reservation__form label.wpplugin-reservation__cost,
 .wpplugin-reservation__form label.wpplugin-reservation__rules {
 	display: flex;

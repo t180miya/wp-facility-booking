@@ -4,7 +4,7 @@
 	const calendars = document.querySelectorAll( '.wpplugin-calendar' );
 	const weekdays = [ '日', '月', '火', '水', '木', '金', '土' ];
 
-	calendars.forEach( ( calendar ) => {
+	calendars.forEach( ( calendar, calendarIndex ) => {
 		const yearSelect = calendar.querySelector( '.wpplugin-calendar__year' );
 		const monthSelect = calendar.querySelector( '.wpplugin-calendar__month' );
 		const facilitySelect = calendar.querySelector( '.wpplugin-calendar__facility' );
@@ -142,6 +142,37 @@
 			} );
 		};
 		const stripYen = ( value ) => String( value || '' ).replace( /\s*円\s*$/, '' );
+		const renderFacilityDescription = ( container, value ) => {
+			const text = String( value || '' );
+			const fragment = document.createDocumentFragment();
+			const urlPattern = /https?:\/\/[^\s]+/gi;
+			let lastIndex = 0;
+			for ( const match of text.matchAll( urlPattern ) ) {
+				const url = match[ 0 ];
+				let parsed;
+				try {
+					parsed = new URL( url );
+				} catch ( error ) {
+					if ( ! ( error instanceof TypeError ) ) {
+						throw error;
+					}
+					continue;
+				}
+				if ( parsed.protocol !== 'http:' && parsed.protocol !== 'https:' ) {
+					continue;
+				}
+				fragment.append( document.createTextNode( text.slice( lastIndex, match.index ) ) );
+				const link = document.createElement( 'a' );
+				link.href = parsed.href;
+				link.target = '_blank';
+				link.rel = 'noopener noreferrer';
+				link.textContent = url;
+				fragment.append( link );
+				lastIndex = match.index + url.length;
+			}
+			fragment.append( document.createTextNode( text.slice( lastIndex ) ) );
+			container.replaceChildren( fragment );
+		};
 		const updateFacilityInfo = () => {
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__name' ).textContent = String( selectedFacility.name || '' );
 			const isBoth = selectedFacility.reservation_type === '両方';
@@ -164,7 +195,7 @@
 				calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-hours' ).textContent = `${ String( selectedFacility.stay_start || '' ) }〜${ String( selectedFacility.stay_end || '' ) } ※ 翌日`;
 			}
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__hours' ).textContent = `${ String( selectedFacility.start || '' ) }〜${ String( selectedFacility.end || '' ) }`;
-			calendar.parentElement.querySelector( '.wpplugin-facility-info__description' ).textContent = String( selectedFacility.info || '' );
+			renderFacilityDescription( calendar.parentElement.querySelector( '.wpplugin-facility-info__description' ), selectedFacility.info );
 		};
 		const resetReservationForm = () => {
 			reservationForm.reset();
@@ -183,6 +214,39 @@
 		const dateAndWeekdayLabel = ( date ) => `${ Number( date.slice( -2 ) ) }日（${ weekdayFor( date ) }）`;
 		const escapeHtml = ( value ) => String( value ).replace( /[&<>'"]/g, ( character ) => ( { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[ character ] ) );
 		const truncateTitle = ( title ) => Array.from( title ).slice( 0, 10 ).join( '' ) + ( Array.from( title ).length > 10 ? '…' : '' );
+		const helpMarkup = ( label, description, tooltipId ) => {
+			const text = String( description || '' ).trim();
+			return text
+				? `<button type="button" class="wpplugin-reservation__condition-help" aria-label="${ escapeHtml( label ) }の説明" aria-describedby="${ tooltipId }" aria-expanded="false">?</button><span id="${ tooltipId }" class="wpplugin-reservation__condition-tooltip" role="tooltip" hidden>${ escapeHtml( text ) }</span>`
+				: '<span class="wpplugin-reservation__condition-help is-empty" role="img" aria-label="説明はありません">?</span>';
+		};
+		const bindHelp = ( container ) => {
+			const button = container.querySelector( 'button.wpplugin-reservation__condition-help' );
+			if ( ! button ) {
+				return;
+			}
+			const tooltip = container.querySelector( '.wpplugin-reservation__condition-tooltip' );
+			const show = ( visible ) => {
+				tooltip.hidden = ! visible;
+				button.setAttribute( 'aria-expanded', String( visible ) );
+			};
+			container.addEventListener( 'mouseenter', () => show( true ) );
+			container.addEventListener( 'mouseleave', () => {
+				if ( button.dataset.pinned !== 'true' ) {
+					show( false );
+				}
+			} );
+			button.addEventListener( 'click', () => {
+				button.dataset.pinned = String( button.dataset.pinned !== 'true' );
+				show( button.dataset.pinned === 'true' );
+			} );
+			button.addEventListener( 'keydown', ( event ) => {
+				if ( event.key === 'Escape' ) {
+					button.dataset.pinned = 'false';
+					show( false );
+				}
+			} );
+		};
 		const updateReservationFields = () => {
 			const typeRow = reservationForm.querySelector( '.wpplugin-reservation__type-row' );
 			const typeSelect = reservationForm.querySelector( '.wpplugin-reservation__type' );
@@ -221,9 +285,33 @@
 				const condition = String( selectedFacility[ `additional_condition_${ index }` ] || '' );
 				const fee = String( selectedFacility[ `additional_fee_${ index }` ] || '' );
 				const feeLabel = fee && ! fee.includes( '円' ) ? `${ fee } 円` : fee;
-				return condition ? `<label>${ escapeHtml( condition ) }${ feeLabel ? `（${ escapeHtml( feeLabel ) }）` : '' }<input type="number" name="additional_quantity_${ index }" min="0" step="1" value="0"></label>` : '';
+				const inputId = `wpplugin-additional-quantity-${ calendarIndex }-${ index }`;
+				const tooltipId = `wpplugin-additional-description-${ calendarIndex }-${ index }`;
+				const help = helpMarkup( condition, selectedFacility[ `additional_condition_description_${ index }` ], tooltipId );
+				return condition ? `<div class="wpplugin-reservation__condition"><div class="wpplugin-reservation__condition-heading"><label for="${ inputId }">${ escapeHtml( condition ) }${ feeLabel ? `（${ escapeHtml( feeLabel ) }）` : '' }</label>${ help }</div><input id="${ inputId }" type="number" name="additional_quantity_${ index }" min="0" step="1" value="0"></div>` : '';
 			} ).join( '' );
+			conditions.querySelectorAll( '.wpplugin-reservation__condition-heading' ).forEach( bindHelp );
+			[
+				[ '.wpplugin-reservation__cost-help', '予約者費用負担の対象外', selectedFacility.cost_exemption_description, `wpplugin-cost-exemption-description-${ calendarIndex }` ],
+				[ '.wpplugin-reservation__details-help', '予約条件詳細', selectedFacility.reservation_details_description, `wpplugin-reservation-details-description-${ calendarIndex }` ],
+			].forEach( ( [ selector, label, description, tooltipId ] ) => {
+				const help = reservationForm.querySelector( selector );
+				const newHelp = help.cloneNode( false );
+				newHelp.innerHTML = helpMarkup( label, description, tooltipId );
+				help.replaceWith( newHelp );
+				bindHelp( newHelp );
+			} );
 		};
+		document.addEventListener( 'click', ( event ) => {
+			reservationForm.querySelectorAll( '.wpplugin-reservation__condition-heading' ).forEach( ( heading ) => {
+				const button = heading.querySelector( 'button.wpplugin-reservation__condition-help' );
+				if ( button && ! heading.contains( event.target ) ) {
+					button.dataset.pinned = 'false';
+					button.setAttribute( 'aria-expanded', 'false' );
+					heading.querySelector( '.wpplugin-reservation__condition-tooltip' ).hidden = true;
+				}
+			} );
+		} );
 		const statusPrefix = ( reservation ) => reservation.status === 'tentative' ? '【仮予約】' : '';
 		const reservationMarkup = ( date ) => reservationsFor( date ).slice( 0, 3 ).map( ( reservation ) => {
 			const text = `${ statusPrefix( reservation ) }${ escapeHtml( reservation.start ) }-${ escapeHtml( reservation.end ) } ${ escapeHtml( truncateTitle( reservation.title ) ) }`;

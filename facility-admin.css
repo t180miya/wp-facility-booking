@@ -127,22 +127,22 @@ table.form-table:has(.wpplugin-facility-manager) td {
 	background: #f6f7f7;
 }
 
-.wpplugin-facility-manager__table th:nth-child(17),
-.wpplugin-facility-manager__table td:nth-child(17) {
+.wpplugin-facility-manager__table th:nth-child(22),
+.wpplugin-facility-manager__table td:nth-child(22) {
 	width: 240px;
 	min-width: 240px;
 	max-width: 560px;
 }
 
-.wpplugin-facility-manager__table th:nth-child(18),
-.wpplugin-facility-manager__table td:nth-child(18) {
+.wpplugin-facility-manager__table th:nth-child(23),
+.wpplugin-facility-manager__table td:nth-child(23) {
 	width: 120px;
 	min-width: 120px;
 	white-space: normal;
 	overflow-wrap: anywhere;
 }
 
-.wpplugin-facility-manager__table th:nth-child(19),
+.wpplugin-facility-manager__table th:nth-child(24),
 .wpplugin-facility-manager__table td.wpplugin-facility-manager__sort {
 	width: 70px;
 	min-width: 70px !important;

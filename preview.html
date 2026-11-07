@@ -48,8 +48,8 @@
         </div>
         <p class="wpplugin-reservation__stay-fee" hidden>宿泊 <span>（<strong class="wpplugin-reservation__stay-fee-value"></strong> 円／泊）</span></p>
         <div class="wpplugin-reservation__additional-conditions"></div>
-        <label>予約条件詳細<textarea name="reservation_details" rows="5"></textarea></label>
-        <label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 予約者費用負担の対象外</label>
+        <div class="wpplugin-reservation__condition"><div class="wpplugin-reservation__condition-heading"><label for="wpplugin-preview-reservation-details">予約条件詳細</label><span class="wpplugin-reservation__details-help"></span></div><textarea id="wpplugin-preview-reservation-details" name="reservation_details" rows="5"></textarea></div>
+        <div class="wpplugin-reservation__condition-heading"><label class="wpplugin-reservation__cost"><input type="checkbox" name="cost_by_association" value="1"> 予約者費用負担の対象外</label><span class="wpplugin-reservation__cost-help"></span></div>
         <button type="submit">予約を保存</button>
         <button type="button" class="wpplugin-reservation__cancel" hidden>予約をキャンセル</button>
       </form>
