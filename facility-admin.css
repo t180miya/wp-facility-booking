@@ -113,6 +113,15 @@ table.form-table:has(.wpplugin-facility-manager) td {
 	text-align: center;
 }
 
+.wpplugin-facility-manager__table tbody th.wpplugin-facility-manager__select-column {
+	vertical-align: middle;
+}
+
+.wpplugin-facility-manager__table .wpplugin-facility-manager__select-column input[type="radio"] {
+	display: block;
+	margin: 0 auto;
+}
+
 .wpplugin-facility-manager__table thead .wpplugin-facility-manager__select-column {
 	z-index: 3;
 	background: #f6f7f7;

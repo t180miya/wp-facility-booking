@@ -282,6 +282,10 @@
 	word-break: break-word;
 }
 
+.wpplugin-facility-info__description {
+	white-space: pre-line;
+}
+
 .wpplugin-calendar__login-required {
 	padding: 1rem;
 	border-left: 4px solid #e05d44;
@@ -319,14 +323,20 @@
 	font-weight: 700;
 }
 
-.wpplugin-reservation__form label.wpplugin-reservation__cost {
+.wpplugin-reservation__form label.wpplugin-reservation__cost,
+.wpplugin-reservation__form label.wpplugin-reservation__rules {
 	display: flex;
 	align-items: center;
 	justify-content: flex-start;
 	gap: 0.5rem;
 }
 
-.wpplugin-reservation__form .wpplugin-reservation__cost input[type="checkbox"] {
+.wpplugin-reservation__form label.wpplugin-reservation__rules[hidden] {
+	display: none;
+}
+
+.wpplugin-reservation__form .wpplugin-reservation__cost input[type="checkbox"],
+.wpplugin-reservation__form .wpplugin-reservation__rules input[type="checkbox"] {
 	flex: 0 0 auto;
 	width: auto;
 	margin: 0;

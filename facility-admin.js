@@ -37,6 +37,7 @@
 			[ 'additional_condition_3', '追加条件名3' ],
 			[ 'additional_fee_3', '追加料金3' ],
 			[ 'info', '施設情報・説明' ],
+			[ 'rules_url', '使用細則URL' ],
 		];
 
 		const persist = (message) => {

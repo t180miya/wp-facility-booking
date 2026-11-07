@@ -151,7 +151,8 @@
 			hourlyFeeRow.hidden = isStayOnly;
 			hoursRow.hidden = isStayOnly;
 			calendar.parentElement.querySelector( '.wpplugin-facility-info__fee-label' ).textContent = isBoth ? '利用料金（時間貸）' : '利用料金';
-			calendar.parentElement.querySelector( '.wpplugin-facility-info__fee' ).textContent = String( selectedFacility.fee || '' );
+			const hourlyFee = String( selectedFacility.fee || '' );
+			calendar.parentElement.querySelector( '.wpplugin-facility-info__fee' ).textContent = hourlyFee && hourlyFee !== '料金未設定' && ! hourlyFee.includes( '円' ) ? `${ hourlyFee } 円` : hourlyFee;
 			const stayFeeRow = calendar.parentElement.querySelector( '.wpplugin-facility-info__stay-fee-row' );
 			stayFeeRow.hidden = ! ( isBoth || isStayOnly );
 			if ( isBoth || isStayOnly ) {
