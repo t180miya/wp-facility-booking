@@ -97,6 +97,7 @@ function wpplugin_sanitize_facility_info( $value ) {
 	}
 	// Preserve percent-encoded URLs, which sanitize_textarea_field removes.
 	$value = wp_check_invalid_utf8( $value );
+	$value = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value );
 	if ( false !== strpos( $value, '<' ) ) {
 		$value = wp_pre_kses_less_than( $value );
 		$value = wp_strip_all_tags( $value, false );
@@ -907,7 +908,7 @@ function wpplugin_enqueue_facility_admin_assets( $hook_suffix ) {
 	}
 	if ( WPPLUGIN_CALENDAR_PAGE_SLUG === $page ) {
 		wp_enqueue_style( 'wpplugin-calendar', plugins_url( 'calendar.css', __FILE__ ), 		array(), '1.0.52' );
-				wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.49', true );
+				wp_enqueue_script( 'wpplugin-calendar', plugins_url( 'calendar.js', __FILE__ ), array(), '1.0.50', true );
 	}
 }
 add_action( 'admin_enqueue_scripts', 'wpplugin_enqueue_facility_admin_assets' );
@@ -1814,7 +1815,7 @@ function wpplugin_enqueue_calendar_styles() {
 		'wpplugin-calendar',
 		plugins_url( 'calendar.js', __FILE__ ),
 		array(),
-		'1.0.49',
+		'1.0.50',
 		true
 	);
 }

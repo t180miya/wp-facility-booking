@@ -166,7 +166,16 @@
 				link.href = parsed.href;
 				link.target = '_blank';
 				link.rel = 'noopener noreferrer';
-				link.textContent = url;
+				link.textContent = url.replace( /(?:%[0-9a-f]{2})+/gi, ( encoded ) => {
+					try {
+						return decodeURIComponent( encoded );
+					} catch ( error ) {
+						if ( ! ( error instanceof URIError ) ) {
+							throw error;
+						}
+						return encoded;
+					}
+				} );
 				fragment.append( link );
 				lastIndex = match.index + url.length;
 			}
